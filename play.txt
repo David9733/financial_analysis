@@ -1,0 +1,1 @@
+uv run --isolated --with-requirements requirements.txt app.py

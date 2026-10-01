@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DART 기업 재무분석</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <main class="shell">
+    <section class="hero">
+      <p class="eyebrow">OPEN DART FINANCIAL LAB</p>
+      <h1>기업의 숫자를<br>한눈에 비교하세요.</h1>
+      <p class="lead">기업명만 입력하면 최근 재무지표와 비교 차트를 자동으로 만듭니다.</p>
+    </section>
+
+    <section class="panel input-panel">
+      <form action="{{ url_for('analyze') }}" method="post">
+        <label for="company-1">기업명</label>
+        <div id="company-list" class="company-list">
+          {% for value in company_values %}
+            <div class="company-row">
+              <input id="company-{{ loop.index }}" type="text" name="company"
+                value="{{ value }}" placeholder="예: 삼성전자" required autocomplete="off">
+              <button type="button" class="remove-company" aria-label="이 기업 삭제">−</button>
+            </div>
+          {% endfor %}
+        </div>
+        <button type="button" id="add-company" class="add-company">+ 기업 추가</button>
+        <p class="hint">한 칸에 한 기업씩 최대 10개까지 추가할 수 있습니다.</p>
+
+        <div class="field-row">
+          <div>
+            <label for="number_of_years">최근 분석 기간</label>
+            <select id="number_of_years" name="number_of_years">
+              {% for year in range(1, 11) %}
+                <option value="{{ year }}" {% if year == number_of_years %}selected{% endif %}>{{ year }}년</option>
+              {% endfor %}
+            </select>
+          </div>
+          <button type="submit" class="submit-button">분석 시작 <span>→</span></button>
+        </div>
+
+        {% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
+      </form>
+    </section>
+
+    <section class="examples">
+      <span>부분 이름이나 약간의 오타가 있어도 비슷한 기업을 찾습니다</span>
+      <div><code>현대그린</code><code>에스케이하닉스</code><code>삼성전짜</code><code>엘지화확</code></div>
+    </section>
+  </main>
+  <script>
+    const form = document.querySelector('form');
+    const companyList = document.querySelector('#company-list');
+    const addButton = document.querySelector('#add-company');
+    const maxCompanies = 10;
+
+    function updateCompanyControls() {
+      const rows = [...companyList.querySelectorAll('.company-row')];
+      rows.forEach((row) => {
+        row.querySelector('.remove-company').disabled = rows.length === 1;
+      });
+      addButton.disabled = rows.length >= maxCompanies;
+    }
+
+    function bindRemoveButton(button) {
+      button.addEventListener('click', () => {
+        if (companyList.children.length > 1) {
+          button.closest('.company-row').remove();
+          updateCompanyControls();
+        }
+      });
+    }
+
+    companyList.querySelectorAll('.remove-company').forEach(bindRemoveButton);
+    addButton.addEventListener('click', () => {
+      if (companyList.children.length >= maxCompanies) return;
+      const row = document.createElement('div');
+      row.className = 'company-row';
+
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.name = 'company';
+      input.placeholder = '예: SK하이닉스';
+      input.required = true;
+      input.autocomplete = 'off';
+
+      const removeButton = document.createElement('button');
+      removeButton.type = 'button';
+      removeButton.className = 'remove-company';
+      removeButton.setAttribute('aria-label', '이 기업 삭제');
+      removeButton.textContent = '−';
+      bindRemoveButton(removeButton);
+
+      row.append(input, removeButton);
+      companyList.append(row);
+      updateCompanyControls();
+      input.focus();
+    });
+    updateCompanyControls();
+
+    form.addEventListener('submit', () => {
+      const button = form.querySelector('.submit-button');
+      button.disabled = true;
+      button.innerHTML = 'DART 데이터 분석 중…';
+    });
+  </script>
+</body>
+</html>

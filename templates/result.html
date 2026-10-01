@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>분석 결과 · DART 기업 재무분석</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <main class="results-shell">
+    <header class="result-header">
+      <div>
+        <p class="eyebrow">ANALYSIS COMPLETE</p>
+        <h1>{{ companies | join(' · ') }}</h1>
+        <p>{{ companies | length }}개 기업의 재무분석 결과입니다.</p>
+      </div>
+      <div class="header-actions">
+        <a class="button secondary" href="{{ csv_url }}" download>CSV 내려받기</a>
+        <a class="button" href="{{ url_for('index') }}">새 분석</a>
+      </div>
+    </header>
+
+    <section class="chart-grid">
+      {% for chart_url in chart_urls %}
+        <article class="chart-card">
+          <img src="{{ chart_url }}" alt="재무분석 차트 {{ loop.index }}" loading="lazy">
+        </article>
+      {% endfor %}
+    </section>
+
+    <section class="panel table-panel">
+      <div class="section-heading">
+        <h2>상세 데이터</h2>
+        <span>가로로 스크롤해 모든 지표를 확인하세요.</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr>{% for column in columns %}<th>{{ column }}</th>{% endfor %}</tr></thead>
+          <tbody>
+            {% for row in rows %}
+              <tr>{% for value in row %}<td>{{ value }}</td>{% endfor %}</tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
