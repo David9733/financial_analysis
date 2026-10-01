@@ -125,8 +125,6 @@ cd financial_analysis
 DART_KEY=발급받은_API_키
 ```
 
-`DART_API_KEY`라는 이름도 사용할 수 있습니다.
-
 ### 3. 웹 애플리케이션 실행
 
 이 프로젝트는 uv 관리 Python에서도 시스템 패키지를 변경하지 않고 실행할 수 있습니다.
@@ -135,11 +133,13 @@ DART_KEY=발급받은_API_키
 uv run --isolated --with-requirements requirements.txt app.py
 ```
 
-브라우저에서 아래 주소를 엽니다.
+기본 설정으로 실행하면 브라우저에서 아래 주소를 엽니다.
 
 ```text
 http://127.0.0.1:5000
 ```
+
+호스트나 포트 설정을 변경했다면 터미널에 표시된 실제 접속 주소를 사용합니다.
 
 > uv 관리 Python에서는 `python -m pip install`이 PEP 668 정책으로 차단될 수 있습니다. `--break-system-packages`로 우회하지 않고 위의 `uv run` 방식을 권장합니다.
 
