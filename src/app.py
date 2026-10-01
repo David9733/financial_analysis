@@ -8,12 +8,18 @@ from uuid import uuid4
 
 from flask import Flask, abort, render_template, request, send_from_directory, url_for
 
-from dart_api import CompanyNotFoundError, DartAPIError
-from financial_analysis import FINAL_COLUMNS, format_result_for_csv
-from main import OUTPUT_DIR, run_analysis
+try:  # src.app 모듈로 import하는 경우
+    from .dart_api import CompanyNotFoundError, DartAPIError
+    from .financial_analysis import FINAL_COLUMNS, format_result_for_csv
+    from .main import OUTPUT_DIR, run_analysis
+except ImportError:  # src/app.py를 직접 실행하는 경우
+    from dart_api import CompanyNotFoundError, DartAPIError
+    from financial_analysis import FINAL_COLUMNS, format_result_for_csv
+    from main import OUTPUT_DIR, run_analysis
 
 
 APP_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = APP_DIR.parent
 WEB_RUNS_DIR = OUTPUT_DIR / "web_runs"
 AMOUNT_COLUMNS = {
     "매출",
@@ -29,7 +35,11 @@ AMOUNT_COLUMNS = {
     "자본총계",
 }
 
-app = Flask(__name__)
+app = Flask(
+    __name__,
+    template_folder=str(PROJECT_ROOT / "templates"),
+    static_folder=str(PROJECT_ROOT / "static"),
+)
 app.config["MAX_CONTENT_LENGTH"] = 32 * 1024
 
 

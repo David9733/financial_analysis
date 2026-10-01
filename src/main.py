@@ -38,8 +38,8 @@ END_YEAR = None
 NUMBER_OF_YEARS = 5
 
 APP_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = APP_DIR
-OUTPUT_DIR = APP_DIR / "output"
+PROJECT_ROOT = APP_DIR.parent
+OUTPUT_DIR = PROJECT_ROOT / "output"
 
 
 def configure_console() -> None:

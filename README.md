@@ -130,7 +130,7 @@ DART_KEY=발급받은_API_키
 이 프로젝트는 uv 관리 Python에서도 시스템 패키지를 변경하지 않고 실행할 수 있습니다.
 
 ```powershell
-uv run --isolated --with-requirements requirements.txt app.py
+uv run --isolated --with-requirements requirements.txt src/app.py
 ```
 
 기본 설정으로 실행하면 브라우저에서 아래 주소를 엽니다.
@@ -147,7 +147,7 @@ http://127.0.0.1:5000
 
 ## 🖥️ CLI로 실행하기
 
-`main.py` 상단의 기업명과 기간을 수정합니다.
+`src/main.py` 상단의 기업명과 기간을 수정합니다.
 
 ```python
 COMPANIES = ["삼성전자"]
@@ -162,13 +162,13 @@ NUMBER_OF_YEARS = 5
 실행 명령:
 
 ```powershell
-uv run --isolated --with-requirements requirements.txt main.py
+uv run --isolated --with-requirements requirements.txt src/main.py
 ```
 
 다른 Python 코드에서도 호출할 수 있습니다.
 
 ```python
-from main import run_analysis
+from src.main import run_analysis
 
 result = run_analysis(
     ["삼성전자", "SK하이닉스"],
@@ -183,11 +183,12 @@ result = run_analysis(
 
 ```text
 financial_analysis/
-├── app.py                  # Flask 웹 애플리케이션과 요청 처리
-├── main.py                 # 전체 분석 파이프라인 실행
-├── dart_api.py             # Open DART 통신과 유사 기업명 검색
-├── financial_analysis.py   # 계정 선택, 업종 판별과 재무지표 계산
-├── visualization.py        # 단일 기업 추세와 복수 기업 비교 차트
+├── src/
+│   ├── app.py              # Flask 웹 애플리케이션과 요청 처리
+│   ├── main.py             # 전체 분석 파이프라인 실행
+│   ├── dart_api.py         # Open DART 통신과 유사 기업명 검색
+│   ├── financial_analysis.py # 계정 선택, 업종 판별과 재무지표 계산
+│   └── visualization.py    # 단일 기업 추세와 복수 기업 비교 차트
 ├── templates/
 │   ├── index.html          # 기업 입력 화면
 │   └── result.html         # 결과 차트와 상세표 화면
