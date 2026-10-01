@@ -6,7 +6,6 @@
 ![Pandas](https://img.shields.io/badge/Pandas-Analysis-150458?style=flat&logo=pandas&logoColor=white)
 ![Matplotlib](https://img.shields.io/badge/Matplotlib-Visualization-11557C?style=flat)
 ![Open DART](https://img.shields.io/badge/Open%20DART-FSS-0B6BCB?style=flat)
-![OS](https://img.shields.io/badge/OS-Windows-0078D6?style=flat&logo=windows&logoColor=white)
 
 기업의 재무제표를 직접 내려받아 계정명을 찾고 계산식을 적용하는 반복 작업을 줄이기 위해 만든 프로젝트입니다. <br>기업명을 한 개 또는 여러 개 입력하면 **일반기업, 금융업, 보험업을 자동 구분**하고, 업종에 맞는 재무지표와 차트를 보여줍니다.
 
