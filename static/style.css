@@ -51,7 +51,7 @@ input[type="text"]:focus, select:focus { border-color: var(--accent); background
 }
 .add-company:hover { color: white; background: var(--accent); }
 .hint { margin: 10px 0 26px; color: var(--muted); font-size: 13px; }
-.field-row { display: grid; grid-template-columns: minmax(180px, 260px) 1fr; gap: 20px; align-items: end; }
+.field-row { display: grid; grid-template-columns: minmax(160px, 220px) minmax(160px, 220px) 1fr; gap: 20px; align-items: end; }
 button, .button {
   display: inline-flex; min-height: 52px; align-items: center; justify-content: center; gap: 12px;
   border: 0; border-radius: 14px; padding: 0 24px; color: white; background: var(--accent);
@@ -65,16 +65,61 @@ button:disabled { opacity: .65; cursor: wait; transform: none; }
 .examples { margin-top: 28px; color: var(--muted); font-size: 13px; }
 .examples div { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 code { padding: 8px 11px; border: 1px solid var(--line); border-radius: 999px; color: var(--ink); background: white; font-family: inherit; }
+.analysis-progress { margin-top: 28px; padding: 28px; }
+.progress-heading { display: flex; justify-content: space-between; gap: 24px; align-items: flex-end; }
+.progress-heading h2 { margin: 0; font-size: 22px; }
+.progress-heading strong { color: var(--accent); font-size: 24px; }
+.progress-track { overflow: hidden; height: 10px; margin-top: 22px; border-radius: 999px; background: #e6edf5; }
+.progress-track span { display: block; width: 0; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--accent), var(--mint)); transition: width .35s ease; }
+.analysis-progress > p { margin: 14px 0 0; color: var(--muted); }
+.progress-steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 22px 0 0; padding: 0; list-style: none; }
+.progress-steps li { padding: 11px 12px; border: 1px solid var(--line); border-radius: 12px; color: var(--muted); background: #f8fafc; font-size: 12px; text-align: center; }
+.progress-steps li.is-active { border-color: var(--accent); color: var(--accent); background: #eaf3fc; font-weight: 800; }
+.progress-steps li.is-complete { border-color: #a7e3cf; color: #0b7657; background: #eefbf6; }
 
 .results-shell { width: min(1480px, calc(100% - 40px)); margin: 0 auto; padding: 54px 0 80px; }
 .result-header { display: flex; justify-content: space-between; gap: 28px; align-items: flex-end; margin-bottom: 36px; }
 .result-header h1 { font-size: clamp(30px, 4vw, 52px); }
 .result-header p:last-child { color: var(--muted); }
 .header-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.result-section { margin-top: 42px; }
+.result-section > .section-heading { margin-bottom: 20px; }
+.result-section .eyebrow { margin-bottom: 8px; }
+.result-section h2, .result-section h3 { margin: 0; }
+.warning-list { margin-bottom: 26px; padding: 14px 18px; border: 1px solid #f5d7a1; border-radius: 14px; color: #805b10; background: #fffaf0; }
+.warning-list p { margin: 4px 0; }
+.kpi-company-grid, .insight-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 20px; }
+.kpi-company-card, .insight-card { padding: 26px; }
+.kpi-company-heading { display: flex; justify-content: space-between; gap: 16px; align-items: baseline; margin-bottom: 22px; }
+.kpi-company-heading h3, .insight-card h3 { margin: 0; font-size: 21px; }
+.kpi-company-heading span { color: var(--muted); font-size: 12px; }
+.kpi-groups { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+.kpi-groups h4, .insight-card h4 { margin: 0 0 12px; font-size: 14px; }
+.kpi-list { margin: 0; }
+.kpi-list div { display: flex; justify-content: space-between; gap: 12px; padding: 9px 0; border-bottom: 1px solid #edf2f7; }
+.kpi-list dt { color: var(--muted); font-size: 12px; }
+.kpi-list dd { margin: 0; font-size: 13px; font-weight: 800; text-align: right; }
+.insight-card > section { margin-top: 22px; }
+.insight-card section p { margin: 8px 0; line-height: 1.7; }
+.insight-evidence { color: var(--muted); font-size: 12px; }
+.insight-card ul { margin: 8px 0 0; padding-left: 20px; color: var(--muted); line-height: 1.7; }
+.stock-card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 16px; margin-bottom: 20px; }
+.stock-card { padding: 22px; border: 1px solid var(--line); border-radius: 18px; background: white; box-shadow: 0 12px 32px rgba(16,42,67,.07); }
+.stock-card > div:first-child { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+.stock-card strong { font-size: 18px; }
+.stock-card span { color: var(--muted); font-size: 12px; }
+.stock-card > p { margin: 22px 0; font-size: 28px; font-weight: 800; }
+.stock-card dl { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 0; }
+.stock-card dl div { min-width: 0; }
+.stock-card dt { color: var(--muted); font-size: 12px; }
+.stock-card dd { overflow: hidden; margin: 5px 0 0; font-size: 13px; font-weight: 700; text-overflow: ellipsis; }
 .chart-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
 .chart-card { overflow: hidden; margin: 0; padding: 12px; border: 1px solid var(--line); border-radius: 20px; background: white; box-shadow: 0 14px 40px rgba(16,42,67,.08); }
 .chart-card img { display: block; width: 100%; height: auto; border-radius: 12px; }
+.chart-note { margin: 12px 4px 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
 .table-panel { margin-top: 28px; padding: 28px; }
+.compact-panel { box-shadow: 0 14px 40px rgba(16,42,67,.08); }
+.empty-state { padding: 28px; border: 1px dashed #9fb3c8; border-radius: 16px; color: var(--muted); background: rgba(255,255,255,.65); text-align: center; }
 .section-heading { display: flex; justify-content: space-between; gap: 20px; align-items: baseline; margin-bottom: 18px; }
 .section-heading h2 { margin: 0; font-size: 24px; }
 .section-heading span { color: var(--muted); font-size: 13px; }
@@ -89,7 +134,10 @@ tbody tr:hover { background: #f8fbff; }
   .shell { padding-top: 48px; }
   .input-panel { padding: 22px; }
   .field-row, .chart-grid { grid-template-columns: 1fr; }
+  .kpi-company-grid, .insight-grid, .kpi-groups { grid-template-columns: 1fr; }
   .result-header { align-items: flex-start; flex-direction: column; }
   .header-actions, .header-actions .button { width: 100%; }
   .section-heading { align-items: flex-start; flex-direction: column; }
+  .progress-heading { align-items: flex-start; flex-direction: column; }
+  .progress-steps { grid-template-columns: 1fr 1fr; }
 }

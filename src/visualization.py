@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
+
+import matplotlib
+
+matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 from matplotlib import font_manager
@@ -17,6 +22,20 @@ COLORS = ["#2563EB", "#F97316", "#16A34A", "#DC2626", "#7C3AED", "#0891B2"]
 
 def configure_korean_font() -> None:
     """설치된 한글 글꼴을 찾아 Matplotlib에 적용한다."""
+    windows_font = (
+        Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts" / "malgun.ttf"
+    )
+    if windows_font.is_file():
+        try:
+            font_manager.fontManager.addfont(str(windows_font))
+            plt.rcParams["font.family"] = font_manager.FontProperties(
+                fname=windows_font
+            ).get_name()
+            plt.rcParams["axes.unicode_minus"] = False
+            return
+        except (OSError, RuntimeError, ValueError) as error:
+            LOGGER.warning("Windows 한글 글꼴을 불러오지 못했습니다: %s", error)
+
     installed = {font.name for font in font_manager.fontManager.ttflist}
     for candidate in ("Malgun Gothic", "AppleGothic", "Noto Sans CJK KR", "NanumGothic"):
         if candidate in installed:
@@ -37,6 +56,73 @@ def _finish_axis(ax, title: str, ylabel: str) -> None:
         ax.legend()
 
 
+def _format_chart_value(value: float) -> str:
+    absolute = abs(value)
+    if absolute >= 100:
+        return f"{value:,.0f}"
+    if absolute >= 10:
+        return f"{value:,.1f}"
+    return f"{value:,.2f}"
+
+
+def _bar_chart(
+    data: pd.DataFrame,
+    columns: list[str],
+    title: str,
+    ylabel: str,
+    scale: float = 1,
+    *,
+    single_year_note: bool = False,
+):
+    """연도별 수준과 지표 간 차이를 묶은 막대로 표시한다."""
+    configure_korean_font()
+    fig, ax = plt.subplots(figsize=(9, 5))
+    available_columns = [column for column in columns if column in data and data[column].notna().any()]
+    x = np.arange(len(data))
+
+    if available_columns:
+        width = min(0.72 / len(available_columns), 0.36)
+        for index, column in enumerate(available_columns):
+            offset = (index - (len(available_columns) - 1) / 2) * width
+            values = data[column] / scale
+            bars = ax.bar(
+                x + offset,
+                values,
+                width,
+                label=column,
+                color=COLORS[index % len(COLORS)],
+            )
+            if len(data) * len(available_columns) <= 20:
+                labels = ["" if pd.isna(value) else _format_chart_value(value) for value in values]
+                ax.bar_label(bars, labels=labels, padding=3, fontsize=8)
+    else:
+        ax.text(
+            0.5,
+            0.5,
+            "사용 가능한 원천 데이터 없음",
+            ha="center",
+            va="center",
+            transform=ax.transAxes,
+        )
+
+    ax.set_xticks(x, data["연도"])
+    ax.axhline(0, color="#64748B", linewidth=0.8)
+    _finish_axis(ax, title, ylabel)
+    if single_year_note:
+        ax.text(
+            0.99,
+            0.98,
+            "단일 연도 조회: 추세선 대신 해당 연도 값을 표시",
+            ha="right",
+            va="top",
+            fontsize=8,
+            color="#64748B",
+            transform=ax.transAxes,
+        )
+    fig.tight_layout()
+    return fig
+
+
 def _line_chart(
     data: pd.DataFrame,
     columns: list[str],
@@ -44,14 +130,24 @@ def _line_chart(
     ylabel: str,
     scale: float = 1,
 ):
+    configure_korean_font()
+    if len(data) == 1:
+        return _bar_chart(
+            data,
+            columns,
+            title,
+            ylabel,
+            scale=scale,
+            single_year_note=True,
+        )
+
     fig, ax = plt.subplots(figsize=(9, 5))
     available_columns = [column for column in columns if column in data and data[column].notna().any()]
     for index, column in enumerate(available_columns):
         ax.plot(
             data["연도"],
             data[column] / scale,
-            marker="o",
-            linewidth=2,
+            linewidth=2.4,
             label=column,
             color=COLORS[index % len(COLORS)],
         )
@@ -66,8 +162,8 @@ def _line_chart(
         )
     _finish_axis(ax, title, ylabel)
     ax.set_xticks(data["연도"])
-    if len(data) > 1:
-        ax.set_xlim(data["연도"].min() - 0.5, data["연도"].max() + 0.5)
+    ax.axhline(0, color="#64748B", linewidth=0.8)
+    ax.set_xlim(data["연도"].min() - 0.5, data["연도"].max() + 0.5)
     fig.tight_layout()
     return fig
 
@@ -84,30 +180,31 @@ def create_single_company_charts(data: pd.DataFrame, charts_dir: Path) -> list:
     figures = []
 
     if analysis_type == "일반기업":
-        fig, ax = plt.subplots(figsize=(9, 5))
-        x = np.arange(len(data))
-        width = 0.36
-        ax.bar(x - width / 2, data["매출"] / 1e12, width, label="매출", color=COLORS[0])
-        ax.bar(x + width / 2, data["영업이익"] / 1e12, width, label="영업이익", color=COLORS[1])
-        ax.set_xticks(x, data["연도"])
-        _finish_axis(ax, f"{company} 매출과 영업이익", "조 원")
-        fig.tight_layout()
+        fig = _bar_chart(data, ["매출", "영업이익"], f"{company} 매출과 영업이익", "조 원", 1e12)
         _save_figure(fig, charts_dir / "revenue_operating_profit.png")
         figures.append(fig)
         chart_specs = [
-            (["영업이익률"], f"{company} 영업이익률", "비율 (%)", 1, "operating_margin.png"),
-            (["부채비율"], f"{company} 부채비율", "비율 (%)", 1, "debt_ratio.png"),
-            (["이자보상배율"], f"{company} 이자보상배율", "배", 1, "interest_coverage.png"),
-            (["ROE", "매출성장"], f"{company} ROE와 매출성장", "비율 (%)", 1, "roe_revenue_growth.png"),
-            (["매출채권회전일수"], f"{company} 매출채권회전일수", "일", 1, "receivables_days.png"),
+            ("line", ["영업이익률", "ROE", "ROA"], f"{company} 수익성 추이", "비율 (%)", 1, "operating_margin.png"),
+            ("bar", ["부채비율"], f"{company} 부채비율", "비율 (%)", 1, "debt_ratio.png"),
+            ("bar", ["이자보상배율"], f"{company} 이자보상배율", "배", 1, "interest_coverage.png"),
+            (
+                "bar",
+                ["매출성장", "영업이익성장", "당기순이익성장"],
+                f"{company} 성장률 비교",
+                "비율 (%)",
+                1,
+                "roe_revenue_growth.png",
+            ),
+            ("bar", ["매출채권회전일수"], f"{company} 매출채권회전일수", "일", 1, "receivables_days.png"),
         ]
     elif analysis_type == "금융업":
         chart_specs = [
-            (["총자산"], f"{company} 총자산", "조 원", 1e12, "total_assets.png"),
-            (["영업이익", "당기순이익"], f"{company} 이익", "조 원", 1e12, "financial_profit.png"),
-            (["순이자손익", "순수수료손익"], f"{company} 주요 영업손익", "조 원", 1e12, "financial_income.png"),
+            ("bar", ["총자산"], f"{company} 총자산", "조 원", 1e12, "total_assets.png"),
+            ("bar", ["영업이익", "당기순이익"], f"{company} 이익", "조 원", 1e12, "financial_profit.png"),
+            ("bar", ["순이자손익", "순수수료손익"], f"{company} 주요 영업손익", "조 원", 1e12, "financial_income.png"),
             (
-                ["ROE", "총자산성장", "영업이익성장", "당기순이익성장"],
+                "bar",
+                ["ROE", "ROA", "총자산성장", "영업이익성장", "당기순이익성장"],
                 f"{company} 수익성과 성장",
                 "비율 (%)",
                 1,
@@ -117,6 +214,7 @@ def create_single_company_charts(data: pd.DataFrame, charts_dir: Path) -> list:
     else:
         chart_specs = [
             (
+                "bar",
                 ["보험서비스수익", "영업이익", "당기순이익"],
                 f"{company} 보험서비스수익과 이익",
                 "조 원",
@@ -124,14 +222,16 @@ def create_single_company_charts(data: pd.DataFrame, charts_dir: Path) -> list:
                 "insurance_revenue_profit.png",
             ),
             (
+                "bar",
                 ["보험서비스손익", "투자손익"],
                 f"{company} 보험서비스손익과 투자손익",
                 "조 원",
                 1e12,
                 "insurance_results.png",
             ),
-            (["총자산"], f"{company} 총자산", "조 원", 1e12, "total_assets.png"),
+            ("bar", ["총자산"], f"{company} 총자산", "조 원", 1e12, "total_assets.png"),
             (
+                "bar",
                 ["보험서비스마진", "ROE", "보험서비스수익성장", "총자산성장"],
                 f"{company} 보험 수익성과 성장",
                 "비율 (%)",
@@ -140,8 +240,9 @@ def create_single_company_charts(data: pd.DataFrame, charts_dir: Path) -> list:
             ),
         ]
 
-    for columns, title, ylabel, scale, filename in chart_specs:
-        fig = _line_chart(data, columns, title, ylabel, scale=scale)
+    for chart_kind, columns, title, ylabel, scale, filename in chart_specs:
+        chart_factory = _line_chart if chart_kind == "line" else _bar_chart
+        fig = chart_factory(data, columns, title, ylabel, scale=scale)
         _save_figure(fig, charts_dir / filename)
         figures.append(fig)
     return figures

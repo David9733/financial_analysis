@@ -179,6 +179,7 @@ FINAL_COLUMNS = [
     "부채비율",
     "이자보상배율",
     "ROE",
+    "ROA",
     "매출성장",
     "보험서비스수익성장",
     "총자산성장",
@@ -436,6 +437,7 @@ def calculate_metrics(raw_accounts: pd.DataFrame) -> pd.DataFrame:
     previous_net_income = grouped["net_income"].shift(1).where(consecutive)
 
     average_equity = (values["equity"] + previous_equity) / 2
+    average_assets = (values["assets"] + previous_assets) / 2
     analysis_type = _company_analysis_types(values)
     general_mask = analysis_type.eq("일반기업")
     financial_mask = analysis_type.eq("금융업")
@@ -478,6 +480,8 @@ def calculate_metrics(raw_accounts: pd.DataFrame) -> pd.DataFrame:
             "이자보상배율": interest_coverage.where(general_mask),
             # 평균자본을 사용한다. 기말자본만 쓰는 방식보다 기간 중 자본 변화를 반영한다.
             "ROE": _safe_ratio(values["net_income"], average_equity) * 100,
+            # 요청 기간 밖의 직전연도도 내부 수집하므로 1년 조회에서도 평균자산을 계산한다.
+            "ROA": _safe_ratio(values["net_income"], average_assets) * 100,
             "매출성장": revenue_growth.where(general_mask),
             "보험서비스수익성장": insurance_revenue_growth.where(insurance_mask),
             "총자산성장": _safe_ratio(values["assets"] - previous_assets, previous_assets) * 100,
@@ -542,6 +546,8 @@ def format_result_for_csv(result: pd.DataFrame) -> pd.DataFrame:
 
     missing_roe = pd.isna(display["ROE"])
     display.loc[missing_roe, "ROE"] = "직전연도 자본 또는 당기순이익 없음"
+    missing_roa = pd.isna(display["ROA"])
+    display.loc[missing_roa, "ROA"] = "직전연도 자산 또는 당기순이익 없음"
     display[metric_columns] = display[metric_columns].fillna("원천 데이터 없음")
     return display[FINAL_COLUMNS]
 
@@ -565,10 +571,6 @@ def select_output_periods(
         else:
             company_data = company_data.tail(number_of_years)
 
-        # 화면에 표시되는 첫 연도의 성장률은 비교 기준이 없으므로 NaN 처리한다.
-        if not company_data.empty:
-            company_data = company_data.copy()
-            company_data.loc[company_data.index[0], GROWTH_COLUMNS] = np.nan
         selected_parts.append(company_data)
 
     if not selected_parts:

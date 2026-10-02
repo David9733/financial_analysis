@@ -15,22 +15,185 @@
         <p>{{ companies | length }}개 기업의 재무분석 결과입니다.</p>
       </div>
       <div class="header-actions">
-        <a class="button secondary" href="{{ csv_url }}" download>CSV 내려받기</a>
+        <a class="button secondary" href="{{ csv_url }}" download>재무 CSV</a>
+        {% if stock_summary_csv_url %}<a class="button secondary" href="{{ stock_summary_csv_url }}" download>주가 요약 CSV</a>{% endif %}
+        {% if investor_summary_csv_url %}<a class="button secondary" href="{{ investor_summary_csv_url }}" download>투자자 수급 CSV</a>{% endif %}
+        {% if stock_prices_csv_url %}<a class="button secondary" href="{{ stock_prices_csv_url }}" download>일별 시세 CSV</a>{% endif %}
         <a class="button" href="{{ url_for('index') }}">새 분석</a>
       </div>
     </header>
 
-    <section class="chart-grid">
-      {% for chart_url in chart_urls %}
-        <article class="chart-card">
-          <img src="{{ chart_url }}" alt="재무분석 차트 {{ loop.index }}" loading="lazy">
-        </article>
-      {% endfor %}
+    {% if warnings %}
+      <section class="warning-list" aria-label="데이터 조회 안내">
+        {% for warning in warnings %}<p>{{ warning }}</p>{% endfor %}
+      </section>
+    {% endif %}
+
+    {% if kpi_cards %}
+      <section class="result-section">
+        <div class="section-heading">
+          <div><p class="eyebrow">KPI DASHBOARD</p><h2>핵심 성과지표</h2></div>
+          <span>Python/Pandas 계산 결과</span>
+        </div>
+        <div class="kpi-company-grid">
+          {% for card in kpi_cards %}
+            <article class="panel kpi-company-card">
+              <div class="kpi-company-heading">
+                <h3>{{ card.company }}</h3>
+                <span>{{ card.analysis_type }} · {{ card.financial_period }}년</span>
+              </div>
+              <div class="kpi-groups">
+                <div>
+                  <h4>재무 KPI</h4>
+                  <dl class="kpi-list">
+                    {% for metric in card.financial %}
+                      <div title="{{ metric.reason or '' }}"><dt>{{ metric.label }}</dt><dd>{{ metric.value }}</dd></div>
+                    {% endfor %}
+                  </dl>
+                </div>
+                <div>
+                  <h4>시장 KPI</h4>
+                  <dl class="kpi-list">
+                    {% for metric in card.market %}
+                      <div title="{{ metric.reason or '' }}"><dt>{{ metric.label }}</dt><dd>{{ metric.value }}</dd></div>
+                    {% endfor %}
+                  </dl>
+                </div>
+              </div>
+            </article>
+          {% endfor %}
+        </div>
+      </section>
+    {% endif %}
+
+    <section class="result-section">
+      <div class="section-heading">
+        <div><p class="eyebrow">GPT INSIGHTS</p><h2>GPT 자동 인사이트</h2></div>
+        <span>외부 공개데이터로 계산된 KPI만 해석합니다.</span>
+      </div>
+      <p class="chart-note">투자 권유나 미래 주가 예측이 아닌 공개 데이터 기반 참고 정보입니다. 재무 기준연도와 주가 최신 기준일을 함께 확인해 주세요.</p>
+      {% if gpt_insights %}
+        <div class="insight-grid">
+          {% for insight in gpt_insights %}
+            <article class="panel insight-card">
+              <h3>{{ insight.company }}</h3>
+              <section>
+                <h4>한줄 요약</h4>
+                <p>{{ insight.one_line_summary.summary }}</p>
+                {% if insight.one_line_summary.evidence %}<p class="insight-evidence">근거: {% for item in insight.one_line_summary.evidence %}{{ item.label }} {{ item.value }}{% if not loop.last %} · {% endif %}{% endfor %}</p>{% endif %}
+              </section>
+              <section><h4>데이터 기준</h4><p>{{ insight.data_basis }}</p></section>
+              {% for title, section in [('성장성', insight.growth), ('수익성', insight.profitability), ('재무 안정성', insight.stability), ('효율성', insight.efficiency), ('시장 흐름', insight.market)] %}
+                <section>
+                  <h4>{{ title }}</h4>
+                  <p>{{ section.summary }}</p>
+                  {% if section.evidence %}<p class="insight-evidence">근거: {% for item in section.evidence %}{{ item.label }} {{ item.value }}{% if not loop.last %} · {% endif %}{% endfor %}</p>{% endif %}
+                </section>
+              {% endfor %}
+              {% for title, items in [('KPI 간 주요 관계 및 불일치', insight.relationships_and_mismatches), ('긍정적으로 나타난 데이터', insight.positive_signals), ('주의해서 볼 데이터', insight.caution_signals), ('추가 확인사항', insight.additional_checks)] %}
+                {% if items %}
+                  <section>
+                    <h4>{{ title }}</h4>
+                    <ul>
+                      {% for section in items %}
+                        <li>{{ section.summary }}{% if section.evidence %}<span class="insight-evidence"> — {% for item in section.evidence %}{{ item.label }} {{ item.value }}{% if not loop.last %} · {% endif %}{% endfor %}</span>{% endif %}</li>
+                      {% endfor %}
+                    </ul>
+                  </section>
+                {% endif %}
+              {% endfor %}
+              <section>
+                <h4>종합 분석</h4>
+                <p>{{ insight.overall_summary.summary }}</p>
+                {% if insight.overall_summary.evidence %}<p class="insight-evidence">근거: {% for item in insight.overall_summary.evidence %}{{ item.label }} {{ item.value }}{% if not loop.last %} · {% endif %}{% endfor %}</p>{% endif %}
+              </section>
+            </article>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="empty-state">GPT 분석을 사용할 수 없어 계산된 KPI만 표시합니다.</div>
+      {% endif %}
+    </section>
+
+    {% if gpt_comparisons %}
+      <section class="result-section">
+        <div class="section-heading">
+          <div><p class="eyebrow">COMPARISON</p><h2>기업 간 차이</h2></div>
+          <span>종합점수나 순위 없이 KPI별 차이만 비교합니다.</span>
+        </div>
+        <div class="insight-grid">
+          {% for comparison in gpt_comparisons %}
+            <article class="panel insight-card">
+              <p>{{ comparison.summary }}</p>
+              {% if comparison.evidence %}
+                <p class="insight-evidence">근거: {% for item in comparison.evidence %}{{ item.company }} {{ item.label }} {{ item.value }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+              {% endif %}
+            </article>
+          {% endfor %}
+        </div>
+      </section>
+    {% endif %}
+
+    <section class="result-section">
+      <div class="section-heading">
+        <div><p class="eyebrow">MARKET</p><h2>주식시장 분석</h2></div>
+        <span>{{ stock_period_label }} · 최신 거래일 기준</span>
+      </div>
+
+      {% if stock_cards %}
+        <div class="stock-card-grid">
+          {% for card in stock_cards %}
+            <article class="stock-card">
+              <div><strong>{{ card.company }}</strong><span>{{ card.code }} · {{ card.date }}</span></div>
+              <p>{{ card.close }}</p>
+              <dl>
+                <div><dt>기간 수익률</dt><dd>{{ card.return }}</dd></div>
+                <div><dt>시가총액</dt><dd>{{ card.market_cap }}</dd></div>
+              </dl>
+            </article>
+          {% endfor %}
+        </div>
+
+        <div class="chart-grid">
+          {% for chart_url in stock_chart_urls %}
+            <article class="chart-card">
+              <img src="{{ chart_url }}" alt="주식시장 차트 {{ loop.index }}" loading="lazy">
+            </article>
+          {% endfor %}
+        </div>
+        <p class="chart-note">투자자 비율은 공개 동향에서 제공하는 최근 최대 10거래일의 매수 거래량 기준입니다. 거래량 막대의 빨강/파랑은 실제 매수·매도 물량 분리가 아니라 시가 대비 종가를 이용한 매수·매도 우세 표시입니다.</p>
+
+        <section class="panel table-panel compact-panel">
+          <div class="section-heading"><h3>주가 요약</h3><span>재무정보와 다른 일별 거래 데이터입니다.</span></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr>{% for column in stock_columns %}<th>{{ column }}</th>{% endfor %}</tr></thead>
+              <tbody>{% for row in stock_rows %}<tr>{% for value in row %}<td>{{ value }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+            </table>
+          </div>
+        </section>
+      {% else %}
+        <div class="empty-state">조회 가능한 주식시장 데이터가 없어 재무분석만 표시합니다.</div>
+      {% endif %}
+    </section>
+
+    <section class="result-section">
+      <div class="section-heading">
+        <div><p class="eyebrow">FINANCIALS</p><h2>재무 분석</h2></div>
+        <span>연간 사업보고서 기준</span>
+      </div>
+      <div class="chart-grid">
+        {% for chart_url in chart_urls %}
+          <article class="chart-card">
+            <img src="{{ chart_url }}" alt="재무분석 차트 {{ loop.index }}" loading="lazy">
+          </article>
+        {% endfor %}
+      </div>
     </section>
 
     <section class="panel table-panel">
       <div class="section-heading">
-        <h2>상세 데이터</h2>
+        <h2>재무 상세 데이터</h2>
         <span>가로로 스크롤해 모든 지표를 확인하세요.</span>
       </div>
       <div class="table-wrap">

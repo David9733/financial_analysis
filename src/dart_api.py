@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import os
 import re
+import time
 import unicodedata
 import zipfile
 from difflib import SequenceMatcher
@@ -18,6 +20,8 @@ from xml.etree import ElementTree
 
 BASE_URL = "https://opendart.fss.or.kr/api"
 ANNUAL_REPORT_CODE = "11011"
+DEFAULT_CORP_CODE_CACHE_TTL = 7 * 24 * 60 * 60
+LOGGER = logging.getLogger(__name__)
 
 
 class DartAPIError(RuntimeError):
@@ -84,11 +88,23 @@ def _normalize_company_name(name: str) -> str:
 class DartClient:
     """DART API를 호출하고, 저장 경로가 있을 때만 기업코드를 캐시한다."""
 
-    def __init__(self, api_key: str, data_dir: Path | None = None) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        data_dir: Path | None = None,
+        cache_ttl_seconds: int = DEFAULT_CORP_CODE_CACHE_TTL,
+    ) -> None:
         self.api_key = api_key
         self.data_dir = data_dir
         self.corp_code_cache = data_dir / "corp_codes.json" if data_dir else None
+        self.cache_ttl_seconds = cache_ttl_seconds
         self._companies_cache: list[dict] | None = None
+
+    def _corp_code_cache_is_fresh(self) -> bool:
+        if not self.corp_code_cache or not self.corp_code_cache.is_file():
+            return False
+        age_seconds = time.time() - self.corp_code_cache.stat().st_mtime
+        return age_seconds <= self.cache_ttl_seconds
 
     def _open(self, endpoint: str, params: dict, timeout: int = 30):
         query = urlencode({"crtfc_key": self.api_key, **params})
@@ -171,11 +187,20 @@ class DartClient:
         """고유번호 목록을 받고, 캐시 경로가 설정된 경우에만 저장한다."""
         if self._companies_cache is not None and not refresh:
             return self._companies_cache
-        if self.corp_code_cache and self.corp_code_cache.is_file() and not refresh:
-            self._companies_cache = json.loads(
-                self.corp_code_cache.read_text(encoding="utf-8")
-            )
-            return self._companies_cache
+        if self._corp_code_cache_is_fresh() and not refresh:
+            try:
+                cached = json.loads(self.corp_code_cache.read_text(encoding="utf-8"))
+                if isinstance(cached, list) and cached:
+                    self._companies_cache = cached
+                    LOGGER.info(
+                        "dart_corp_code_cache_hit path=%s company_count=%d",
+                        self.corp_code_cache,
+                        len(cached),
+                    )
+                    return self._companies_cache
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                # 손상된 캐시는 아래 다운로드 경로에서 자동으로 교체한다.
+                pass
 
         companies = self._download_corp_codes()
         self._companies_cache = companies
@@ -183,6 +208,11 @@ class DartClient:
             self.data_dir.mkdir(parents=True, exist_ok=True)
             self.corp_code_cache.write_text(
                 json.dumps(companies, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            LOGGER.info(
+                "dart_corp_code_cache_updated path=%s company_count=%d",
+                self.corp_code_cache,
+                len(companies),
             )
         return companies
 

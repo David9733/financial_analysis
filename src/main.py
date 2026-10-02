@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import logging
+import json
+import shutil
 import sys
-from datetime import date
+import time
+from dataclasses import dataclass, field
+from datetime import date, timedelta
 from pathlib import Path
+from typing import Callable
 
 import pandas as pd
 
-try:  # 패키지로 import하는 경우
+if __package__:  # ``python -m src.main`` 또는 패키지 import
     from .dart_api import CompanyNotFoundError, DartAPIError, DartClient, get_api_key
     from .financial_analysis import (
         RAW_COLUMNS,
@@ -19,7 +24,17 @@ try:  # 패키지로 import하는 경우
         select_output_periods,
     )
     from .visualization import create_visualizations
-except ImportError:  # main.py를 직접 실행하는 경우
+    from .investor_analysis import (
+        InvestorDataError,
+        empty_investor_summary,
+        get_investor_trading,
+    )
+    from .gpt_analysis import GPTAnalysisError, analyze_kpis
+    from .kpi_analysis import build_kpi_payload
+    from .stock_analysis import prepare_stock_prices, summarize_stock_prices
+    from .stock_api import StockAPIError, StockClient, get_stock_api_key
+    from .stock_visualization import create_stock_visualizations
+else:  # ``python src/main.py``로 직접 실행
     from dart_api import CompanyNotFoundError, DartAPIError, DartClient, get_api_key
     from financial_analysis import (
         RAW_COLUMNS,
@@ -29,6 +44,16 @@ except ImportError:  # main.py를 직접 실행하는 경우
         select_output_periods,
     )
     from visualization import create_visualizations
+    from investor_analysis import (
+        InvestorDataError,
+        empty_investor_summary,
+        get_investor_trading,
+    )
+    from gpt_analysis import GPTAnalysisError, analyze_kpis
+    from kpi_analysis import build_kpi_payload
+    from stock_analysis import prepare_stock_prices, summarize_stock_prices
+    from stock_api import StockAPIError, StockClient, get_stock_api_key
+    from stock_visualization import create_stock_visualizations
 
 
 # 초보 사용자는 아래 기업명과 기간만 수정하면 된다.
@@ -40,6 +65,44 @@ NUMBER_OF_YEARS = 5
 APP_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = APP_DIR.parent
 OUTPUT_DIR = PROJECT_ROOT / "output"
+CLI_OUTPUT_DIR = OUTPUT_DIR / "cli"
+CACHE_DIR = PROJECT_ROOT / ".cache"
+STOCK_PERIOD_DAYS = {"1m": 31, "3m": 92, "1y": 366, "3y": 1096}
+LOGGER = logging.getLogger(__name__)
+ProgressCallback = Callable[[str, int, str], None]
+
+
+def _notify_progress(
+    callback: ProgressCallback | None,
+    stage: str,
+    percent: int,
+    message: str,
+) -> None:
+    if callback is not None:
+        callback(stage, percent, message)
+
+
+def reset_output_directory(output_dir: Path) -> Path:
+    """Remove results from earlier runs and recreate an empty output directory."""
+    target = Path(output_dir)
+    if target.exists():
+        shutil.rmtree(target)
+    target.mkdir(parents=True, exist_ok=True)
+    return target
+
+
+@dataclass
+class IntegratedAnalysisResult:
+    """기존 재무분석과 선택적으로 수집한 주식시장 분석 결과."""
+
+    financial: pd.DataFrame
+    stock_prices: pd.DataFrame
+    stock_summary: pd.DataFrame
+    warnings: list[str]
+    investor_summary: pd.DataFrame = field(default_factory=empty_investor_summary)
+    kpi_payload: dict = field(default_factory=dict)
+    gpt_insights: list[dict] = field(default_factory=list)
+    gpt_comparisons: list[dict] = field(default_factory=list)
 
 
 def configure_console() -> None:
@@ -91,9 +154,13 @@ def run_analysis(
     number_of_years: int = 5,
     show_charts: bool = True,
     output_dir: Path | None = None,
+    progress_callback: ProgressCallback | None = None,
 ) -> pd.DataFrame:
     """DART 수집 → 지표 계산 → CSV 저장 → 차트 생성을 실행한다."""
     configure_console()
+    target_output_dir = reset_output_directory(
+        Path(output_dir) if output_dir is not None else CLI_OUTPUT_DIR
+    )
     if not companies:
         raise ValueError("기업명을 1개 이상 입력해 주세요.")
     if number_of_years < 1:
@@ -101,11 +168,20 @@ def run_analysis(
     if start_year is not None and end_year is not None and start_year > end_year:
         raise ValueError("START_YEAR는 END_YEAR보다 클 수 없습니다.")
 
+    _notify_progress(progress_callback, "financial", 5, "DART 기업 정보를 확인하고 있습니다.")
     api_key = get_api_key(PROJECT_ROOT)
-    client = DartClient(api_key)
+    client = DartClient(api_key, data_dir=CACHE_DIR)
     raw_records = []
+    resolved_companies = []
 
-    for input_name in companies:
+    for index, input_name in enumerate(companies):
+        progress = 8 + int(index / max(len(companies), 1) * 32)
+        _notify_progress(
+            progress_callback,
+            "financial",
+            progress,
+            f"{input_name} 재무제표를 수집하고 있습니다.",
+        )
         company = client.find_company(input_name)
         company_name = company["corp_name"]
         yearly_data = _query_years(
@@ -119,6 +195,7 @@ def run_analysis(
         if not yearly_data:
             logging.warning("%s: 분석 가능한 사업보고서가 없습니다.", company_name)
             continue
+        resolved_companies.append(company)
         for year, rows, fs_div in yearly_data:
             raw_records.extend(
                 extract_source_accounts(company_name, year, fs_div, rows)
@@ -138,27 +215,190 @@ def run_analysis(
     if result.empty:
         raise DartAPIError("선택한 기간에 분석 가능한 재무 데이터가 없습니다.")
 
-    target_output_dir = Path(output_dir) if output_dir is not None else OUTPUT_DIR
-    target_output_dir.mkdir(parents=True, exist_ok=True)
+    # 통합 분석이 DART 기업 목록을 다시 받지 않고 종목코드를 재사용한다.
+    result.attrs["resolved_companies"] = resolved_companies
+
     result_path = target_output_dir / "financial_analysis.csv"
     # utf-8-sig는 Excel에서도 한글 CSV가 깨지지 않도록 BOM을 포함한다.
     format_result_for_csv(result).to_csv(result_path, index=False, encoding="utf-8-sig")
     create_visualizations(result, target_output_dir / "charts", show_charts=show_charts)
+    _notify_progress(progress_callback, "financial", 42, "재무지표와 차트를 생성했습니다.")
 
     print(f"분석 CSV: {result_path}")
     print(f"차트 폴더: {target_output_dir / 'charts'}")
     return result
 
 
+def run_integrated_analysis(
+    companies: list[str],
+    start_year: int | None = None,
+    end_year: int | None = None,
+    number_of_years: int = 5,
+    stock_period: str = "1y",
+    show_charts: bool = True,
+    output_dir: Path | None = None,
+    progress_callback: ProgressCallback | None = None,
+) -> IntegratedAnalysisResult:
+    """재무분석 후 상장기업의 일별 주식시세를 결합한다."""
+    if stock_period not in STOCK_PERIOD_DAYS:
+        raise ValueError("주가 조회 기간은 1m, 3m, 1y, 3y 중 하나여야 합니다.")
+
+    target_output_dir = Path(output_dir) if output_dir is not None else CLI_OUTPUT_DIR
+    financial = run_analysis(
+        companies,
+        start_year=start_year,
+        end_year=end_year,
+        number_of_years=number_of_years,
+        show_charts=show_charts,
+        output_dir=target_output_dir,
+        progress_callback=progress_callback,
+    )
+    resolved_companies = financial.attrs.get("resolved_companies", [])
+    warnings: list[str] = []
+    price_frames: list[pd.DataFrame] = []
+    investor_frames: list[pd.DataFrame] = []
+
+    stock_client = None
+    try:
+        stock_client = StockClient(get_stock_api_key(PROJECT_ROOT))
+    except StockAPIError as error:
+        warnings.append(str(error))
+
+    period_end = date.today()
+    period_start = period_end - timedelta(days=STOCK_PERIOD_DAYS[stock_period])
+    _notify_progress(progress_callback, "market", 46, "주식시장 데이터를 준비하고 있습니다.")
+    for index, company in enumerate(resolved_companies):
+        if stock_client is None:
+            break
+        company_name = company["corp_name"]
+        market_progress = 48 + int(index / max(len(resolved_companies), 1) * 22)
+        _notify_progress(
+            progress_callback,
+            "market",
+            market_progress,
+            f"{company_name} 주가와 투자자 동향을 수집하고 있습니다.",
+        )
+        stock_code = company.get("stock_code", "")
+        if not stock_code:
+            warnings.append(f"{company_name}: 상장 종목코드가 없어 재무분석만 제공합니다.")
+            continue
+        try:
+            rows = stock_client.get_stock_prices(
+                stock_code, start_date=period_start, end_date=period_end
+            )
+        except (StockAPIError, ValueError) as error:
+            warnings.append(f"{company_name}: 주식시세 API 조회 실패 ({error})")
+            continue
+        frame = prepare_stock_prices(rows, company_name, stock_code)
+        if frame.empty:
+            warnings.append(f"{company_name}: 선택 기간의 주식시세 데이터가 없습니다.")
+            continue
+        price_frames.append(frame)
+        actual_start = frame["기준일"].min().date()
+        actual_end = frame["기준일"].max().date()
+        try:
+            investor_frame = get_investor_trading(
+                company_name, stock_code, actual_start, actual_end
+            )
+        except InvestorDataError as error:
+            warnings.append(f"{company_name}: 투자자별 수급 조회 실패 ({error})")
+        else:
+            if investor_frame.empty:
+                warnings.append(f"{company_name}: 선택 기간의 투자자별 수급 데이터가 없습니다.")
+            else:
+                investor_frames.append(investor_frame)
+
+    if price_frames:
+        stock_prices = pd.concat(price_frames, ignore_index=True)
+        stock_summary = summarize_stock_prices(stock_prices)
+        investor_summary = (
+            pd.concat(investor_frames, ignore_index=True)
+            if investor_frames
+            else empty_investor_summary()
+        )
+        stock_prices.to_csv(
+            target_output_dir / "stock_prices.csv", index=False, encoding="utf-8-sig"
+        )
+        stock_summary.to_csv(
+            target_output_dir / "stock_summary.csv", index=False, encoding="utf-8-sig"
+        )
+        if not investor_summary.empty:
+            investor_summary.to_csv(
+                target_output_dir / "investor_summary.csv",
+                index=False,
+                encoding="utf-8-sig",
+            )
+        create_stock_visualizations(
+            stock_prices,
+            target_output_dir / "stock_charts",
+            investor_summary=investor_summary,
+        )
+    else:
+        stock_prices = prepare_stock_prices([], "", "")
+        stock_summary = summarize_stock_prices(stock_prices)
+        investor_summary = empty_investor_summary()
+
+    kpi_payload = build_kpi_payload(financial, stock_prices, stock_period)
+    (target_output_dir / "kpi_analysis.json").write_text(
+        json.dumps(kpi_payload, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    gpt_insights: list[dict] = []
+    gpt_comparisons: list[dict] = []
+    _notify_progress(progress_callback, "gpt", 78, "GPT 자동 인사이트를 생성하고 있습니다.")
+    gpt_started_at = time.monotonic()
+    try:
+        gpt_result = analyze_kpis(kpi_payload, PROJECT_ROOT)
+        gpt_insights = gpt_result["analyses"]
+        gpt_comparisons = gpt_result["comparisons"]
+    except GPTAnalysisError as error:
+        warnings.append(f"GPT 자동 분석을 불러오지 못했습니다. ({error})")
+        LOGGER.warning(
+            "gpt_analysis_failed company_count=%d elapsed_seconds=%.2f error=%s",
+            len(kpi_payload.get("companies", [])),
+            time.monotonic() - gpt_started_at,
+            error,
+        )
+    else:
+        LOGGER.info(
+            "gpt_analysis_completed company_count=%d comparison_count=%d elapsed_seconds=%.2f",
+            len(gpt_insights),
+            len(gpt_comparisons),
+            time.monotonic() - gpt_started_at,
+        )
+    if gpt_insights or gpt_comparisons:
+        (target_output_dir / "gpt_insights.json").write_text(
+            json.dumps(
+                {"analyses": gpt_insights, "comparisons": gpt_comparisons},
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+    _notify_progress(progress_callback, "finalizing", 96, "결과 화면을 정리하고 있습니다.")
+
+    return IntegratedAnalysisResult(
+        financial=financial,
+        stock_prices=stock_prices,
+        stock_summary=stock_summary,
+        warnings=warnings,
+        investor_summary=investor_summary,
+        kpi_payload=kpi_payload,
+        gpt_insights=gpt_insights,
+        gpt_comparisons=gpt_comparisons,
+    )
+
+
 def main() -> int:
     configure_console()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     try:
-        result = run_analysis(
+        integrated = run_integrated_analysis(
             COMPANIES,
             start_year=START_YEAR,
             end_year=END_YEAR,
             number_of_years=NUMBER_OF_YEARS,
+            stock_period="1y",
             show_charts=False,
         )
     except (DartAPIError, CompanyNotFoundError, ValueError) as error:
@@ -166,7 +406,12 @@ def main() -> int:
         return 1
 
     print("\n분석 결과")
-    print(result.to_string(index=False))
+    print(integrated.financial.to_string(index=False))
+    if not integrated.stock_summary.empty:
+        print("\n주식시장 요약")
+        print(integrated.stock_summary.to_string(index=False))
+    for warning in integrated.warnings:
+        print(f"주의: {warning}", file=sys.stderr)
     return 0
 
 

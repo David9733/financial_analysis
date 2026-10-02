@@ -1,0 +1,219 @@
+from __future__ import annotations
+
+import os
+import tempfile
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
+
+from src.gpt_analysis import (
+    CompanyInsight,
+    ComparisonInsight,
+    GPTAnalysisError,
+    InsightSection,
+    KPIInsightResponse,
+    MetricReference,
+    analyze_kpis,
+    get_openai_api_key,
+)
+
+
+class GPTAnalysisTests(unittest.TestCase):
+    @staticmethod
+    def payload():
+        return {
+            "companies": [
+                {
+                    "company": "테스트전자",
+                    "financial_period": "2025",
+                    "financial_kpi": {
+                        "roe": {"value": 10.2, "unit": "%", "status": "available", "reason": None},
+                        "debt_ratio": {"value": None, "unit": "%", "status": "missing", "reason": "출처 데이터 없음"},
+                    },
+                    "market_kpi": {
+                        "period_return": {"value": 5.4, "unit": "%", "status": "available", "reason": None}
+                    },
+                }
+            ]
+        }
+
+    @staticmethod
+    def parsed(evidence_key="roe", summary="ROE는 10.2%입니다."):
+        section = InsightSection(summary=summary, evidence_keys=[evidence_key])
+        return KPIInsightResponse(
+            analyses=[
+                CompanyInsight(
+                    company="테스트전자",
+                    one_line_summary=section,
+                    data_basis="2025년 재무 데이터 기준",
+                    growth=section,
+                    profitability=section,
+                    stability=section,
+                    efficiency=section,
+                    market=section,
+                    relationships_and_mismatches=[section],
+                    positive_signals=[section],
+                    caution_signals=[],
+                    additional_checks=[
+                        InsightSection(
+                            summary="최근 공시를 추가 확인할 필요가 있습니다.",
+                            evidence_keys=[evidence_key],
+                        )
+                    ],
+                    overall_summary=section,
+                )
+            ],
+            comparisons=[],
+        )
+
+    def test_missing_api_key_has_clear_error(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            os.environ, {}, clear=True
+        ):
+            with self.assertRaisesRegex(GPTAnalysisError, "OPENAI_API_KEY"):
+                get_openai_api_key(Path(directory))
+
+    def test_legacy_gpt_key_is_supported(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            os.environ, {"GPT_KEY": "legacy-key"}, clear=True
+        ):
+            self.assertEqual(get_openai_api_key(Path(directory)), "legacy-key")
+
+    @patch("src.gpt_analysis.get_openai_api_key", return_value="test-key")
+    def test_uses_responses_parse_without_storage(self, _api_key):
+        client = Mock()
+        client.responses.parse.return_value = SimpleNamespace(
+            output_parsed=self.parsed(), output=[]
+        )
+        with patch("openai.OpenAI", return_value=client):
+            result = analyze_kpis(self.payload(), Path("."))
+
+        self.assertEqual(result["analyses"][0]["company"], "테스트전자")
+        self.assertEqual(result["comparisons"], [])
+        kwargs = client.responses.parse.call_args.kwargs
+        self.assertFalse(kwargs["store"])
+        self.assertIs(kwargs["text_format"], KPIInsightResponse)
+        self.assertIn("15년 이상의 실무 경험", kwargs["instructions"])
+        self.assertIsInstance(kwargs["input"], str)
+
+    @patch("src.gpt_analysis.get_openai_api_key", return_value="test-key")
+    def test_rejects_unavailable_evidence_key(self, _api_key):
+        client = Mock()
+        client.responses.parse.return_value = SimpleNamespace(
+            output_parsed=self.parsed(evidence_key="debt_ratio", summary="확인이 필요합니다."),
+            output=[],
+        )
+        with patch("openai.OpenAI", return_value=client):
+            with self.assertRaisesRegex(GPTAnalysisError, "사용할 수 없는 KPI"):
+                analyze_kpis(self.payload(), Path("."))
+
+    @patch("src.gpt_analysis.get_openai_api_key", return_value="test-key")
+    def test_rejects_numeric_claim_not_in_payload(self, _api_key):
+        client = Mock()
+        client.responses.parse.return_value = SimpleNamespace(
+            output_parsed=self.parsed(summary="ROE는 99.9%입니다."), output=[]
+        )
+        with patch("openai.OpenAI", return_value=client):
+            with self.assertRaisesRegex(GPTAnalysisError, "일치하지 않는 숫자"):
+                analyze_kpis(self.payload(), Path("."))
+
+    @patch("src.gpt_analysis.get_openai_api_key", return_value="test-key")
+    def test_rejects_investment_recommendation_language(self, _api_key):
+        client = Mock()
+        client.responses.parse.return_value = SimpleNamespace(
+            output_parsed=self.parsed(summary="이 종목을 매수해야 합니다."), output=[]
+        )
+        with patch("openai.OpenAI", return_value=client):
+            with self.assertRaisesRegex(GPTAnalysisError, "투자 추천 표현"):
+                analyze_kpis(self.payload(), Path("."))
+
+    @patch("src.gpt_analysis.get_openai_api_key", return_value="test-key")
+    def test_normalizes_prefixed_market_key_and_negative_magnitude(self, _api_key):
+        payload = self.payload()
+        payload["companies"][0]["stock_period"] = "1y"
+        payload["companies"][0]["market_kpi"]["recent_volume_change"] = {
+            "value": -27.42,
+            "unit": "%",
+            "status": "available",
+            "reason": None,
+        }
+        parsed = self.parsed()
+        parsed.analyses[0].market = InsightSection(
+            summary="최근 거래량은 27.42% 감소했습니다.",
+            evidence_keys=["market_kpi.recent_volume_change"],
+        )
+        client = Mock()
+        client.responses.parse.return_value = SimpleNamespace(
+            output_parsed=parsed, output=[]
+        )
+        with patch("openai.OpenAI", return_value=client):
+            result = analyze_kpis(payload, Path("."))
+
+        self.assertEqual(
+            result["analyses"][0]["market"]["evidence_keys"],
+            ["recent_volume_change"],
+        )
+
+    @patch("src.gpt_analysis.get_openai_api_key", return_value="test-key")
+    def test_retries_invalid_multi_company_response_and_accepts_correction(self, _api_key):
+        payload = self.payload()
+        second = {
+            **payload["companies"][0],
+            "company": "비교전자",
+            "financial_kpi": {
+                **payload["companies"][0]["financial_kpi"],
+                "roe": {"value": 8.1, "unit": "%", "status": "available", "reason": None},
+            },
+        }
+        payload["companies"].append(second)
+        first_section = InsightSection(summary="수익성 KPI를 확인했습니다.", evidence_keys=["roe"])
+        second_section = InsightSection(summary="비교 가능한 KPI가 있습니다.", evidence_keys=["roe"])
+        parsed = KPIInsightResponse(
+            analyses=[
+                CompanyInsight(
+                    company="테스트전자", one_line_summary=first_section,
+                    data_basis="2025년 재무 데이터 기준", growth=first_section,
+                    profitability=first_section, stability=first_section,
+                    efficiency=first_section, market=first_section,
+                    relationships_and_mismatches=[first_section], positive_signals=[first_section],
+                    caution_signals=[], additional_checks=[], overall_summary=first_section,
+                ),
+                CompanyInsight(
+                    company="비교전자", one_line_summary=second_section,
+                    data_basis="2025년 재무 데이터 기준", growth=second_section,
+                    profitability=second_section, stability=second_section,
+                    efficiency=second_section, market=second_section,
+                    relationships_and_mismatches=[second_section], positive_signals=[second_section],
+                    caution_signals=[], additional_checks=[], overall_summary=second_section,
+                ),
+            ],
+            comparisons=[
+                ComparisonInsight(
+                    summary="두 기업의 ROE 차이를 확인할 수 있습니다.",
+                    evidence=[
+                        MetricReference(company="테스트전자", metric_key="roe"),
+                        MetricReference(company="비교전자", metric_key="roe"),
+                    ],
+                )
+            ],
+        )
+        invalid = parsed.model_copy(deep=True)
+        invalid.analyses[0].profitability.evidence_keys = ["missing_metric"]
+        client = Mock()
+        client.responses.parse.side_effect = [
+            SimpleNamespace(output_parsed=invalid, output=[]),
+            SimpleNamespace(output_parsed=parsed, output=[]),
+        ]
+        with patch("openai.OpenAI", return_value=client):
+            result = analyze_kpis(payload, Path("."))
+
+        self.assertEqual(len(result["comparisons"]), 1)
+        self.assertEqual(client.responses.parse.call_count, 2)
+        retry_kwargs = client.responses.parse.call_args_list[1].kwargs
+        self.assertEqual(retry_kwargs["max_output_tokens"], 12_000)
+        self.assertIn("내부 검증을 통과하지 못했습니다", retry_kwargs["input"])
+
+
+if __name__ == "__main__":
+    unittest.main()

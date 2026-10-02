@@ -11,7 +11,7 @@
     <section class="hero">
       <p class="eyebrow">OPEN DART FINANCIAL LAB</p>
       <h1>기업의 숫자를<br>한눈에 비교하세요.</h1>
-      <p class="lead">기업명만 입력하면 최근 재무지표와 비교 차트를 자동으로 만듭니다.</p>
+      <p class="lead">기업명만 입력하면 재무지표와 일별 주식시장 데이터를 함께 분석합니다.</p>
     </section>
 
     <section class="panel input-panel">
@@ -31,10 +31,18 @@
 
         <div class="field-row">
           <div>
-            <label for="number_of_years">최근 분석 기간</label>
+            <label for="number_of_years">재무제표 조회기간</label>
             <select id="number_of_years" name="number_of_years">
               {% for year in range(1, 11) %}
                 <option value="{{ year }}" {% if year == number_of_years %}selected{% endif %}>{{ year }}년</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div>
+            <label for="stock_period">주가 조회 기간</label>
+            <select id="stock_period" name="stock_period">
+              {% for value, label in [('1m', '1개월'), ('3m', '3개월'), ('1y', '1년'), ('3y', '3년')] %}
+                <option value="{{ value }}" {% if value == stock_period %}selected{% endif %}>{{ label }}</option>
               {% endfor %}
             </select>
           </div>
@@ -48,6 +56,21 @@
     <section class="examples">
       <span>부분 이름이나 약간의 오타가 있어도 비슷한 기업을 찾습니다</span>
       <div><code>현대그린</code><code>에스케이하닉스</code><code>삼성전짜</code><code>엘지화확</code></div>
+    </section>
+
+    <section id="analysis-progress" class="analysis-progress panel" hidden aria-live="polite">
+      <div class="progress-heading">
+        <div><p class="eyebrow">ANALYSIS PROGRESS</p><h2>기업 데이터를 분석하고 있습니다.</h2></div>
+        <strong id="progress-percent">0%</strong>
+      </div>
+      <div class="progress-track" aria-hidden="true"><span id="progress-bar"></span></div>
+      <p id="progress-message">분석을 준비하고 있습니다.</p>
+      <ol class="progress-steps">
+        <li data-stage="financial">DART 재무제표</li>
+        <li data-stage="market">주가·투자자 동향</li>
+        <li data-stage="gpt">GPT 자동 인사이트</li>
+        <li data-stage="finalizing">결과 정리</li>
+      </ol>
     </section>
   </main>
   <script>
@@ -100,10 +123,62 @@
     });
     updateCompanyControls();
 
-    form.addEventListener('submit', () => {
+    const progressPanel = document.querySelector('#analysis-progress');
+    const progressBar = document.querySelector('#progress-bar');
+    const progressPercent = document.querySelector('#progress-percent');
+    const progressMessage = document.querySelector('#progress-message');
+    const progressStages = ['financial', 'market', 'gpt', 'finalizing', 'complete'];
+
+    function renderProgress(progress) {
+      progressPanel.hidden = false;
+      progressBar.style.width = `${progress.percent}%`;
+      progressPercent.textContent = `${progress.percent}%`;
+      progressMessage.textContent = progress.message;
+      const currentIndex = progressStages.indexOf(progress.stage);
+      document.querySelectorAll('.progress-steps li').forEach((item) => {
+        const itemIndex = progressStages.indexOf(item.dataset.stage);
+        item.classList.toggle('is-active', item.dataset.stage === progress.stage);
+        item.classList.toggle('is-complete', currentIndex > itemIndex || progress.stage === 'complete');
+      });
+    }
+
+    form.addEventListener('submit', async (event) => {
       const button = form.querySelector('.submit-button');
       button.disabled = true;
-      button.innerHTML = 'DART 데이터 분석 중…';
+      button.innerHTML = '재무·주가 데이터 분석 중…';
+      if (!window.fetch || !window.crypto?.getRandomValues) return;
+
+      event.preventDefault();
+      const randomBytes = new Uint8Array(16);
+      window.crypto.getRandomValues(randomBytes);
+      const runId = [...randomBytes].map((value) => value.toString(16).padStart(2, '0')).join('');
+      const formData = new FormData(form);
+      formData.set('run_id', runId);
+      renderProgress({stage: 'financial', percent: 3, message: '분석 요청을 전송하고 있습니다.'});
+      progressPanel.scrollIntoView({behavior: 'smooth', block: 'center'});
+
+      const pollProgress = async () => {
+        try {
+          const response = await fetch(`/analysis-progress/${runId}`, {cache: 'no-store'});
+          if (response.ok) renderProgress(await response.json());
+        } catch (_) {
+          // 본 분석 요청은 계속 진행되므로 일시적인 진행 조회 실패는 무시한다.
+        }
+      };
+      const timer = window.setInterval(pollProgress, 900);
+      try {
+        const response = await fetch(form.action, {method: 'POST', body: formData});
+        const html = await response.text();
+        window.clearInterval(timer);
+        document.open();
+        document.write(html);
+        document.close();
+      } catch (_) {
+        window.clearInterval(timer);
+        button.disabled = false;
+        button.innerHTML = '분석 다시 시도 <span>→</span>';
+        renderProgress({stage: 'failed', percent: 100, message: '서버에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.'});
+      }
     });
   </script>
 </body>
