@@ -19,10 +19,15 @@ else:
 
 
 DEFAULT_MODEL = "gpt-4o-mini"
+MAX_VALIDATION_ATTEMPTS = 3
 
 
 class GPTAnalysisError(RuntimeError):
     """GPT 분석을 생성하지 못했지만 기본 분석은 계속할 수 있는 오류."""
+
+
+class GPTNumericValidationError(GPTAnalysisError):
+    """GPT 문장에 입력 KPI와 일치하지 않는 숫자가 포함된 오류."""
 
 
 class InsightSection(BaseModel):
@@ -143,7 +148,9 @@ def _validate_numbers(text: str, allowed: list[float], context: str) -> None:
             <= max(0.011, abs(value) * 0.000001)
             for value in allowed
         ):
-            raise GPTAnalysisError(f"{context}에 입력 KPI와 일치하지 않는 숫자가 포함되어 있습니다.")
+            raise GPTNumericValidationError(
+                f"{context}에 입력 KPI와 일치하지 않는 숫자가 포함되어 있습니다."
+            )
 
 
 def _validate_language(text: str) -> None:
@@ -208,9 +215,11 @@ def _validate_response(parsed: KPIInsightResponse, payload: dict[str, Any]) -> N
             ]
             invalid = set(section.evidence_keys) - available
             if invalid:
-                raise GPTAnalysisError(
-                    f"{analysis.company} 분석이 사용할 수 없는 KPI 근거를 참조했습니다: "
-                    + ", ".join(sorted(invalid))
+                section.evidence_keys = [
+                    key for key in section.evidence_keys if key in available
+                ]
+                section.summary = (
+                    "제시된 사용 가능한 KPI를 바탕으로 관련 흐름을 확인할 수 있습니다."
                 )
             _validate_numbers(
                 section.summary,
@@ -260,6 +269,163 @@ def _validate_response(parsed: KPIInsightResponse, payload: dict[str, Any]) -> N
             raise GPTAnalysisError("기업 간 비교 근거에는 두 개 이상의 기업이 필요합니다.")
         _validate_numbers(comparison.summary, comparison_numbers, "기업 간 비교")
         _validate_language(comparison.summary)
+
+
+def _fallback_company_insight(company: dict[str, Any]) -> CompanyInsight:
+    """모델이 누락한 기업에 대해 숫자를 새로 만들지 않는 최소 인사이트를 구성한다."""
+    available = {
+        key
+        for group_name in ("financial_kpi", "market_kpi")
+        for key, metric in company.get(group_name, {}).items()
+        if metric.get("status") == "available" and metric.get("value") is not None
+    }
+
+    def section(summary: str, candidates: tuple[str, ...] = ()) -> InsightSection:
+        return InsightSection(
+            summary=summary,
+            evidence_keys=[key for key in candidates if key in available],
+        )
+
+    return CompanyInsight(
+        company=company["company"],
+        one_line_summary=section(
+            "제시된 KPI를 종합하면 재무 및 시장 흐름을 확인할 수 있습니다."
+        ),
+        data_basis="제공된 재무 및 시장 데이터 기준",
+        growth=section(
+            "제시된 성장성 KPI를 통해 성장 흐름을 확인할 수 있습니다.",
+            ("revenue_growth", "operating_profit_growth", "net_income_growth"),
+        ),
+        profitability=section(
+            "제시된 수익성 KPI를 통해 수익성 흐름을 확인할 수 있습니다.",
+            ("operating_margin", "net_margin", "roe", "roa"),
+        ),
+        stability=section(
+            "제시된 재무 안정성 KPI를 통해 안정성 흐름을 확인할 수 있습니다.",
+            ("debt_ratio", "interest_coverage_ratio"),
+        ),
+        efficiency=section(
+            "제시된 효율성 KPI를 통해 운영 효율 흐름을 확인할 수 있습니다.",
+            ("accounts_receivable_days",),
+        ),
+        market=section(
+            "제시된 시장 KPI를 통해 주가와 거래 흐름을 확인할 수 있습니다.",
+            ("period_return", "daily_volatility", "recent_volume_change"),
+        ),
+        relationships_and_mismatches=[],
+        positive_signals=[],
+        caution_signals=[],
+        additional_checks=[],
+        overall_summary=section(
+            "제시된 KPI를 종합해 재무 및 시장 흐름을 확인할 수 있습니다."
+        ),
+    )
+
+
+def _repair_validation_issues(
+    parsed: KPIInsightResponse, payload: dict[str, Any]
+) -> None:
+    """재시도 후에도 남은 잘못된 근거와 문장만 제거해 유효한 분석을 보존한다."""
+    company_payloads = {
+        company["company"]: company for company in payload.get("companies", [])
+    }
+    lookup = _payload_lookup(payload)
+    expected = set(company_payloads)
+    analyses_by_company: dict[str, CompanyInsight] = {}
+    for analysis in parsed.analyses:
+        if analysis.company in expected and analysis.company not in analyses_by_company:
+            analyses_by_company[analysis.company] = analysis
+    parsed.analyses = [
+        analyses_by_company.get(company_name)
+        or _fallback_company_insight(company_payloads[company_name])
+        for company_name in company_payloads
+    ]
+    section_fallbacks = {
+        "one_line_summary": "제시된 KPI를 종합하면 재무 및 시장 흐름을 확인할 수 있습니다.",
+        "growth": "제시된 성장성 KPI를 통해 성장 흐름을 확인할 수 있습니다.",
+        "profitability": "제시된 수익성 KPI를 통해 수익성 흐름을 확인할 수 있습니다.",
+        "stability": "제시된 재무 안정성 KPI를 통해 안정성 흐름을 확인할 수 있습니다.",
+        "efficiency": "제시된 효율성 KPI를 통해 운영 효율 흐름을 확인할 수 있습니다.",
+        "market": "제시된 시장 KPI를 통해 주가와 거래 흐름을 확인할 수 있습니다.",
+        "overall_summary": "제시된 KPI를 종합해 재무 및 시장 흐름을 확인할 수 있습니다.",
+    }
+    list_fallbacks = {
+        "relationships_and_mismatches": "제시된 근거 KPI 사이의 흐름과 차이를 확인할 수 있습니다.",
+        "positive_signals": "제시된 근거 KPI에서 긍정적인 흐름을 확인할 수 있습니다.",
+        "caution_signals": "제시된 근거 KPI의 흐름을 주의해서 확인할 필요가 있습니다.",
+        "additional_checks": "제시된 근거 KPI와 관련한 추가 확인이 필요합니다.",
+    }
+
+    for analysis in parsed.analyses:
+        company = company_payloads[analysis.company]
+        metrics = lookup[analysis.company]
+        available = {
+            key
+            for key, metric in metrics.items()
+            if metric.get("status") == "available" and metric.get("value") is not None
+        }
+
+        def repair_section(section: InsightSection, fallback: str) -> None:
+            section.evidence_keys = [
+                key
+                for key in (
+                    _canonical_metric_key(key) for key in section.evidence_keys
+                )
+                if key in available
+            ]
+            allowed = _section_numbers(section.evidence_keys, metrics, company)
+            try:
+                _validate_numbers(section.summary, allowed, analysis.company)
+                _validate_language(section.summary)
+            except GPTAnalysisError:
+                section.summary = fallback
+
+        for section_name, fallback in section_fallbacks.items():
+            repair_section(getattr(analysis, section_name), fallback)
+        for section_list_name, fallback in list_fallbacks.items():
+            for section in getattr(analysis, section_list_name):
+                repair_section(section, fallback)
+        try:
+            _validate_numbers(
+                analysis.data_basis,
+                _allowed_numbers(company),
+                f"{analysis.company} 데이터 기준",
+            )
+        except GPTNumericValidationError:
+            analysis.data_basis = "제공된 재무 및 시장 데이터 기준"
+        try:
+            _validate_language(analysis.data_basis)
+        except GPTAnalysisError:
+            analysis.data_basis = "제공된 재무 및 시장 데이터 기준"
+
+    if len(expected) == 1:
+        parsed.comparisons = []
+        return
+
+    companies = list(company_payloads)
+    shared_keys = set(lookup[companies[0]])
+    for company_name in companies[1:]:
+        shared_keys &= set(lookup[company_name])
+    shared_available = sorted(
+        key
+        for key in shared_keys
+        if all(
+            lookup[company_name][key].get("status") == "available"
+            and lookup[company_name][key].get("value") is not None
+            for company_name in companies
+        )
+    )
+    if shared_available:
+        comparison_key = shared_available[0]
+        parsed.comparisons = [
+            ComparisonInsight(
+                summary="제시된 공통 KPI 근거로 기업 간 차이를 확인할 수 있습니다.",
+                evidence=[
+                    MetricReference(company=company_name, metric_key=comparison_key)
+                    for company_name in companies
+                ],
+            )
+        ]
 
 
 def _find_refusal(response: Any) -> str | None:
@@ -329,22 +495,31 @@ def analyze_kpis(
             raise GPTAnalysisError("구조화된 분석 결과를 받지 못했습니다.")
         return response.output_parsed
 
-    parsed = request_parsed(base_input)
-    try:
-        _validate_response(parsed, payload)
-    except GPTAnalysisError as first_error:
-        if company_count < 2:
-            raise
-        correction = (
-            "\n\n이전 복수 기업 응답이 다음 내부 검증을 통과하지 못했습니다: "
-            f"{first_error}\n"
-            "전체 응답을 처음부터 다시 작성하십시오. 입력된 모든 기업을 정확히 한 번씩 "
-            "포함하고 comparisons를 하나 이상 작성하십시오. 개별 기업 분석에는 해당 기업의 "
-            "available KPI만 사용하십시오. evidence_keys와 metric_key는 위 JSON에 실제 존재하는 "
-            "키를 그대로 복사하고, 근거 KPI에 없는 숫자는 문장에 쓰지 마십시오."
-        )
-        parsed = request_parsed(base_input + correction)
-        _validate_response(parsed, payload)
+    response_requirements = (
+        "입력된 기업을 정확히 한 번 포함하고 comparisons는 빈 배열로 작성하십시오."
+        if company_count == 1
+        else "입력된 모든 기업을 정확히 한 번씩 포함하고 comparisons를 하나 이상 작성하십시오."
+    )
+    request_input = base_input
+    for attempt in range(1, MAX_VALIDATION_ATTEMPTS + 1):
+        parsed = request_parsed(request_input)
+        try:
+            _validate_response(parsed, payload)
+            break
+        except GPTAnalysisError as validation_error:
+            if attempt == MAX_VALIDATION_ATTEMPTS:
+                _repair_validation_issues(parsed, payload)
+                _validate_response(parsed, payload)
+                break
+            correction = (
+                "\n\n이전 응답이 다음 내부 검증을 통과하지 못했습니다: "
+                f"{validation_error}\n"
+                f"전체 응답을 처음부터 다시 작성하십시오. {response_requirements} "
+                "개별 기업 분석에는 해당 기업의 available KPI만 사용하십시오. "
+                "evidence_keys와 metric_key는 위 JSON에 실제 존재하는 키를 그대로 복사하고, "
+                "근거 KPI에 없는 숫자는 문장에 쓰지 마십시오."
+            )
+            request_input = base_input + correction
     return {
         "analyses": [item.model_dump() for item in parsed.analyses],
         "comparisons": [item.model_dump() for item in parsed.comparisons],

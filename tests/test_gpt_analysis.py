@@ -98,35 +98,64 @@ class GPTAnalysisTests(unittest.TestCase):
         self.assertIsInstance(kwargs["input"], str)
 
     @patch("src.gpt_analysis.get_openai_api_key", return_value="test-key")
-    def test_rejects_unavailable_evidence_key(self, _api_key):
+    def test_removes_unavailable_evidence_key_without_discarding_analysis(self, _api_key):
+        payload = self.payload()
+        payload["companies"][0]["financial_history"] = [
+            {
+                "period": "2023",
+                "financial_kpi": {
+                    "revenue_growth": {
+                        "value": None,
+                        "unit": "%",
+                        "status": "missing",
+                        "reason": "비교연도 없음",
+                    }
+                },
+            }
+        ]
         client = Mock()
         client.responses.parse.return_value = SimpleNamespace(
-            output_parsed=self.parsed(evidence_key="debt_ratio", summary="확인이 필요합니다."),
+            output_parsed=self.parsed(
+                evidence_key="financial_history.2023.revenue_growth",
+                summary="확인이 필요합니다.",
+            ),
             output=[],
         )
         with patch("openai.OpenAI", return_value=client):
-            with self.assertRaisesRegex(GPTAnalysisError, "사용할 수 없는 KPI"):
-                analyze_kpis(self.payload(), Path("."))
+            result = analyze_kpis(payload, Path("."))
+
+        self.assertEqual(client.responses.parse.call_count, 1)
+        self.assertEqual(result["analyses"][0]["profitability"]["evidence_keys"], [])
+        self.assertIn(
+            "사용 가능한 KPI",
+            result["analyses"][0]["profitability"]["summary"],
+        )
 
     @patch("src.gpt_analysis.get_openai_api_key", return_value="test-key")
-    def test_rejects_numeric_claim_not_in_payload(self, _api_key):
+    def test_repairs_numeric_claim_not_in_payload_after_retries(self, _api_key):
         client = Mock()
         client.responses.parse.return_value = SimpleNamespace(
             output_parsed=self.parsed(summary="ROE는 99.9%입니다."), output=[]
         )
         with patch("openai.OpenAI", return_value=client):
-            with self.assertRaisesRegex(GPTAnalysisError, "일치하지 않는 숫자"):
-                analyze_kpis(self.payload(), Path("."))
+            result = analyze_kpis(self.payload(), Path("."))
+
+        self.assertEqual(client.responses.parse.call_count, 3)
+        self.assertNotIn("99.9", result["analyses"][0]["profitability"]["summary"])
+        self.assertEqual(
+            result["analyses"][0]["profitability"]["evidence_keys"], ["roe"]
+        )
 
     @patch("src.gpt_analysis.get_openai_api_key", return_value="test-key")
-    def test_rejects_investment_recommendation_language(self, _api_key):
+    def test_repairs_investment_recommendation_language_after_retries(self, _api_key):
         client = Mock()
         client.responses.parse.return_value = SimpleNamespace(
             output_parsed=self.parsed(summary="이 종목을 매수해야 합니다."), output=[]
         )
         with patch("openai.OpenAI", return_value=client):
-            with self.assertRaisesRegex(GPTAnalysisError, "투자 추천 표현"):
-                analyze_kpis(self.payload(), Path("."))
+            result = analyze_kpis(self.payload(), Path("."))
+
+        self.assertNotIn("매수", result["analyses"][0]["profitability"]["summary"])
 
     @patch("src.gpt_analysis.get_openai_api_key", return_value="test-key")
     def test_normalizes_prefixed_market_key_and_negative_magnitude(self, _api_key):
@@ -154,6 +183,54 @@ class GPTAnalysisTests(unittest.TestCase):
             result["analyses"][0]["market"]["evidence_keys"],
             ["recent_volume_change"],
         )
+
+    @patch("src.gpt_analysis.get_openai_api_key", return_value="test-key")
+    def test_retries_invalid_single_company_response_and_accepts_correction(self, _api_key):
+        corrected = self.parsed()
+        invalid = corrected.model_copy(deep=True)
+        invalid.analyses[0].relationships_and_mismatches[0].summary = (
+            "ROE는 99.9%입니다."
+        )
+        client = Mock()
+        client.responses.parse.side_effect = [
+            SimpleNamespace(output_parsed=invalid, output=[]),
+            SimpleNamespace(output_parsed=corrected, output=[]),
+        ]
+
+        with patch("openai.OpenAI", return_value=client):
+            result = analyze_kpis(self.payload(), Path("."))
+
+        self.assertEqual(result["analyses"][0]["company"], "테스트전자")
+        self.assertEqual(result["comparisons"], [])
+        self.assertEqual(client.responses.parse.call_count, 2)
+        retry_kwargs = client.responses.parse.call_args_list[1].kwargs
+        self.assertEqual(retry_kwargs["max_output_tokens"], 8_000)
+        self.assertIn("내부 검증을 통과하지 못했습니다", retry_kwargs["input"])
+        self.assertIn("comparisons는 빈 배열", retry_kwargs["input"])
+
+    @patch("src.gpt_analysis.get_openai_api_key", return_value="test-key")
+    def test_single_company_can_recover_on_third_validation_attempt(self, _api_key):
+        corrected = self.parsed()
+        first_invalid = corrected.model_copy(deep=True)
+        first_invalid.analyses[0].relationships_and_mismatches[0].summary = (
+            "ROE는 99.9%입니다."
+        )
+        second_invalid = corrected.model_copy(deep=True)
+        second_invalid.analyses[0].profitability.summary = "ROE는 88.8%입니다."
+        client = Mock()
+        client.responses.parse.side_effect = [
+            SimpleNamespace(output_parsed=first_invalid, output=[]),
+            SimpleNamespace(output_parsed=second_invalid, output=[]),
+            SimpleNamespace(output_parsed=corrected, output=[]),
+        ]
+
+        with patch("openai.OpenAI", return_value=client):
+            result = analyze_kpis(self.payload(), Path("."))
+
+        self.assertEqual(result["analyses"][0]["company"], "테스트전자")
+        self.assertEqual(client.responses.parse.call_count, 3)
+        final_retry_input = client.responses.parse.call_args_list[2].kwargs["input"]
+        self.assertIn("일치하지 않는 숫자", final_retry_input)
 
     @patch("src.gpt_analysis.get_openai_api_key", return_value="test-key")
     def test_retries_invalid_multi_company_response_and_accepts_correction(self, _api_key):
@@ -199,7 +276,7 @@ class GPTAnalysisTests(unittest.TestCase):
             ],
         )
         invalid = parsed.model_copy(deep=True)
-        invalid.analyses[0].profitability.evidence_keys = ["missing_metric"]
+        invalid.analyses[0].profitability.summary = "ROE는 99.9%입니다."
         client = Mock()
         client.responses.parse.side_effect = [
             SimpleNamespace(output_parsed=invalid, output=[]),
@@ -213,6 +290,83 @@ class GPTAnalysisTests(unittest.TestCase):
         retry_kwargs = client.responses.parse.call_args_list[1].kwargs
         self.assertEqual(retry_kwargs["max_output_tokens"], 12_000)
         self.assertIn("내부 검증을 통과하지 못했습니다", retry_kwargs["input"])
+
+    @patch("src.gpt_analysis.get_openai_api_key", return_value="test-key")
+    def test_repairs_missing_multi_company_comparison_after_retries(self, _api_key):
+        payload = self.payload()
+        second = {
+            **payload["companies"][0],
+            "company": "비교전자",
+            "financial_kpi": {
+                **payload["companies"][0]["financial_kpi"],
+                "roe": {"value": 8.1, "unit": "%", "status": "available", "reason": None},
+            },
+        }
+        payload["companies"].append(second)
+        first = self.parsed().analyses[0]
+        section = InsightSection(summary="비교 가능한 KPI가 있습니다.", evidence_keys=["roe"])
+        second_analysis = first.model_copy(deep=True)
+        second_analysis.company = "비교전자"
+        second_analysis.one_line_summary = section
+        invalid = KPIInsightResponse(
+            analyses=[first, second_analysis],
+            comparisons=[],
+        )
+        client = Mock()
+        client.responses.parse.return_value = SimpleNamespace(
+            output_parsed=invalid, output=[]
+        )
+
+        with patch("openai.OpenAI", return_value=client):
+            result = analyze_kpis(payload, Path("."))
+
+        self.assertEqual(client.responses.parse.call_count, 3)
+        self.assertEqual(len(result["analyses"]), 2)
+        self.assertEqual(len(result["comparisons"]), 1)
+        self.assertEqual(
+            {item["company"] for item in result["comparisons"][0]["evidence"]},
+            {"테스트전자", "비교전자"},
+        )
+
+    @patch("src.gpt_analysis.get_openai_api_key", return_value="test-key")
+    def test_repairs_company_omitted_from_three_company_response(self, _api_key):
+        payload = self.payload()
+        for company_name, roe in (("비교전자", 8.1), ("누락전자", 6.2)):
+            payload["companies"].append(
+                {
+                    **payload["companies"][0],
+                    "company": company_name,
+                    "financial_kpi": {
+                        **payload["companies"][0]["financial_kpi"],
+                        "roe": {
+                            "value": roe,
+                            "unit": "%",
+                            "status": "available",
+                            "reason": None,
+                        },
+                    },
+                }
+            )
+        first = self.parsed().analyses[0]
+        second = first.model_copy(deep=True)
+        second.company = "비교전자"
+        incomplete = KPIInsightResponse(analyses=[first, second], comparisons=[])
+        client = Mock()
+        client.responses.parse.return_value = SimpleNamespace(
+            output_parsed=incomplete, output=[]
+        )
+
+        with patch("openai.OpenAI", return_value=client):
+            result = analyze_kpis(payload, Path("."))
+
+        self.assertEqual(client.responses.parse.call_count, 3)
+        self.assertEqual(
+            [analysis["company"] for analysis in result["analyses"]],
+            ["테스트전자", "비교전자", "누락전자"],
+        )
+        fallback = result["analyses"][2]
+        self.assertEqual(fallback["profitability"]["evidence_keys"], ["roe"])
+        self.assertEqual(len(result["comparisons"]), 1)
 
 
 if __name__ == "__main__":
