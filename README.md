@@ -118,7 +118,13 @@ ROE                = 당기순이익 ÷ 평균자본 × 100
 
 ---
 시연영상
-![Uploading 202610021324.gif…]()
+
+
+https://github.com/user-attachments/assets/fd538833-aba5-4605-85de-0af79b1dd0b6
+
+
+
+
 
 
 
