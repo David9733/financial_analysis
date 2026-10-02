@@ -143,13 +143,7 @@ OpenAI 키가 없거나 GPT 응답 검증에 실패해도 계산된 KPI, 차트�
 
 ### 3. 웹 애플리케이션 실행
 
-이 프로젝트는 uv 관리 Python에서도 시스템 패키지를 변경하지 않고 실행할 수 있습니다.
-
-```powershell
-uv run --python 3.10 --isolated --with-requirements requirements.txt src/app.py
-```
-
-동일한 의존성 버전으로 재현해야 할 때는 잠금 파일을 사용합니다.
+이 프로젝트는 uv 관리 Python과 잠금 파일을 사용하여 시스템 패키지를 변경하지 않고 동일한 의존성 버전으로 실행할 수 있습니다.
 
 ```powershell
 uv run --python 3.10 --isolated --with-requirements requirements.lock src/app.py
