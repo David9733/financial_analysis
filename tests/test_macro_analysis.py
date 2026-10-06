@@ -9,10 +9,14 @@ import pandas as pd
 from src.data_quality import QualityLog
 from src.kpi_analysis import _macro_kpis
 from src.macro_analysis import (
+    FX_CHANGE_COLUMN,
     FX_COLUMN,
     FX_FILLED_COLUMN,
     FX_OUTLIER_COLUMN,
+    PRICE_CHANGE_COLUMN,
     PRICE_OUTLIER_COLUMN,
+    RATE_CHANGE_BP_COLUMN,
+    RATE_CHANGE_PP_COLUMN,
     RATE_COLUMN,
     RATE_FILLED_COLUMN,
     RATE_OUTLIER_COLUMN,
@@ -119,6 +123,43 @@ class MergeMacroTests(unittest.TestCase):
         self.assertEqual(
             merged.groupby("기업명").size().to_dict(), {"둘째": 1, "테스트전자": 2}
         )
+
+
+class DailyChangeColumnTests(unittest.TestCase):
+    def test_close_fx_rate_changes_use_movement_not_level(self):
+        prices = price_frame(["2026-03-02", "2026-03-03", "2026-03-04"], [100.0, 105.0, 102.9])
+        fx = prepare_macro_series(
+            [(date(2026, 3, 2), 1385.2), (date(2026, 3, 3), 1399.052), (date(2026, 3, 4), 1399.052)],
+            FX_COLUMN,
+        )
+        rate = prepare_macro_series(
+            [(date(2026, 3, 2), 2.85), (date(2026, 3, 3), 2.90), (date(2026, 3, 4), 2.88)],
+            RATE_COLUMN,
+        )
+
+        merged = merge_macro_with_prices(prices, fx, rate)
+
+        # 종가 등락률 = 오늘 ÷ 어제 − 1, 첫날은 어제가 없어 빈 값
+        self.assertTrue(pd.isna(merged[PRICE_CHANGE_COLUMN].iloc[0]))
+        self.assertEqual(merged[PRICE_CHANGE_COLUMN].iloc[1:].tolist(), [5.0, -2.0])
+        # 환율 변화율 = 오늘 ÷ 어제 − 1
+        self.assertEqual(merged[FX_CHANGE_COLUMN].iloc[1], 1.0)
+        # 금리는 '%의 %'(약 1.75%)가 아니라 변화폭: 2.85% → 2.90% = +0.05%p = +5bp
+        self.assertEqual(merged[RATE_CHANGE_PP_COLUMN].iloc[1], 0.05)
+        self.assertEqual(merged[RATE_CHANGE_BP_COLUMN].iloc[1], 5.0)
+        self.assertEqual(merged[RATE_CHANGE_BP_COLUMN].iloc[2], -2.0)
+
+    def test_changes_restart_for_each_company(self):
+        first = price_frame(["2026-03-02", "2026-03-03"], [100.0, 110.0])
+        second = price_frame(["2026-03-02", "2026-03-03"], [50.0, 51.0]).assign(
+            기업명="둘째", 종목코드="000002"
+        )
+
+        merged = merge_macro_with_prices(pd.concat([first, second], ignore_index=True))
+
+        second_rows = merged[merged["기업명"] == "둘째"]
+        self.assertTrue(pd.isna(second_rows[PRICE_CHANGE_COLUMN].iloc[0]))
+        self.assertEqual(second_rows[PRICE_CHANGE_COLUMN].iloc[1], 2.0)
 
 
 class MissingAndOutlierTests(unittest.TestCase):

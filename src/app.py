@@ -233,6 +233,11 @@ def format_kpi_metric(metric: dict) -> str:
         return value + unit
     if unit in {"원", "주"}:
         return f"{value:,.0f}{unit}"
+    if unit == "bp":
+        # 금리 변화폭은 bp와 %p를 함께 보여 준다(1bp = 0.01%p).
+        bp_text = f"{value:+,.2f}".rstrip("0").rstrip(".")
+        pp_text = f"{value / 100:+.4f}".rstrip("0").rstrip(".")
+        return f"{bp_text}bp ({pp_text}%p)"
     return f"{value:,.2f}".rstrip("0").rstrip(".") + unit
 
 

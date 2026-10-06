@@ -13,12 +13,16 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 if __package__:
-    from .data_quality import daily_change, iqr_bounds, pair_valid
+    from .data_quality import iqr_bounds, pair_valid
     from .macro_analysis import (
         FX_COLUMN,
         FX_FILLED_COLUMN,
         FX_OUTLIER_COLUMN,
+        FX_CHANGE_COLUMN,
+        PRICE_CHANGE_COLUMN,
         PRICE_OUTLIER_COLUMN,
+        RATE_CHANGE_BP_COLUMN,
+        RATE_CHANGE_PP_COLUMN,
         RATE_COLUMN,
         RATE_FILLED_COLUMN,
         RATE_OUTLIER_COLUMN,
@@ -31,12 +35,16 @@ if __package__:
     )
     from .visualization import COLORS, configure_korean_font
 else:
-    from data_quality import daily_change, iqr_bounds, pair_valid
+    from data_quality import iqr_bounds, pair_valid
     from macro_analysis import (
         FX_COLUMN,
         FX_FILLED_COLUMN,
         FX_OUTLIER_COLUMN,
+        FX_CHANGE_COLUMN,
+        PRICE_CHANGE_COLUMN,
         PRICE_OUTLIER_COLUMN,
+        RATE_CHANGE_BP_COLUMN,
+        RATE_CHANGE_PP_COLUMN,
         RATE_COLUMN,
         RATE_FILLED_COLUMN,
         RATE_OUTLIER_COLUMN,
@@ -248,11 +256,12 @@ def create_daily_change_visualizations(market_macro: pd.DataFrame, charts_dir: P
         return
     charts_dir.mkdir(parents=True, exist_ok=True)
     configure_korean_font()
-    # (값 열, 보간 열, 이상치 열, 변화 방식, 표시 배율, 축 이름, 선 색)
+    # (값 열, 판정에 쓴 하루 변화 열, 표시할 하루 변화 열, 보간 열, 이상치 열, 축 이름, 선 색)
+    # 금리는 %p로 판정하고 bp(= %p × 100)로 표시한다.
     series_specs = [
-        ("종가", None, PRICE_OUTLIER_COLUMN, "pct", 1, "종가 변화율(%)", COLORS[0]),
-        (FX_COLUMN, FX_FILLED_COLUMN, FX_OUTLIER_COLUMN, "pct", 1, "환율 변화율(%)", "#F59E0B"),
-        (RATE_COLUMN, RATE_FILLED_COLUMN, RATE_OUTLIER_COLUMN, "diff", 100, "금리 변화(bp)", "#7656C9"),
+        ("종가", PRICE_CHANGE_COLUMN, PRICE_CHANGE_COLUMN, None, PRICE_OUTLIER_COLUMN, "종가 등락률(%)", COLORS[0]),
+        (FX_COLUMN, FX_CHANGE_COLUMN, FX_CHANGE_COLUMN, FX_FILLED_COLUMN, FX_OUTLIER_COLUMN, "환율 변화율(%)", "#F59E0B"),
+        (RATE_COLUMN, RATE_CHANGE_PP_COLUMN, RATE_CHANGE_BP_COLUMN, RATE_FILLED_COLUMN, RATE_OUTLIER_COLUMN, "금리 변화폭(bp)", "#7656C9"),
     ]
     for (company, code), data in market_macro.groupby(["기업명", "종목코드"], sort=False):
         data = data.sort_values("기준일").reset_index(drop=True)
@@ -260,15 +269,18 @@ def create_daily_change_visualizations(market_macro: pd.DataFrame, charts_dir: P
         if not specs:
             continue
         fig, axes = plt.subplots(len(specs), 1, figsize=(10, 3.2 * len(specs)), sharex=True, squeeze=False)
-        for ax, (column, filled_column, outlier_column, kind, scale, label, color) in zip(axes[:, 0], specs):
-            changes = daily_change(data[column], kind)
+        for ax, (column, judged_column, shown_column, filled_column, outlier_column, label, color) in zip(axes[:, 0], specs):
+            judged = data[judged_column]
+            shown = data[shown_column]
+            # 판정 단위(%p)와 표시 단위(bp)가 다르면 경계선도 같은 배율로 옮긴다.
+            scale = 100 if shown_column == RATE_CHANGE_BP_COLUMN else 1
             filled = (
                 data[filled_column]
                 if filled_column is not None
                 else pd.Series(False, index=data.index)
             )
-            bounds = iqr_bounds(changes, pair_valid(filled))
-            ax.bar(data["기준일"], changes * scale, color=color, width=1, alpha=0.55)
+            bounds = iqr_bounds(judged, pair_valid(filled))
+            ax.bar(data["기준일"], shown, color=color, width=1, alpha=0.55)
             ax.axhline(0, color="#94A3B8", linewidth=0.8)
             if bounds is not None:
                 for bound in bounds:
@@ -277,7 +289,7 @@ def create_daily_change_visualizations(market_macro: pd.DataFrame, charts_dir: P
             if not outliers.empty:
                 ax.scatter(
                     outliers["기준일"],
-                    changes.loc[outliers.index] * scale,
+                    shown.loc[outliers.index],
                     color=OUTLIER_COLOR,
                     s=28,
                     zorder=3,

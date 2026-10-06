@@ -8,9 +8,12 @@ from typing import Any
 import pandas as pd
 
 if __package__:
-    from .data_quality import pair_valid
+    from .data_quality import daily_change, pair_valid
     from .macro_analysis import (
+        FX_CHANGE_COLUMN,
         FX_COLUMN,
+        PRICE_CHANGE_COLUMN,
+        RATE_CHANGE_PP_COLUMN,
         FX_FILLED_COLUMN,
         FX_OUTLIER_COLUMN,
         PRICE_OUTLIER_COLUMN,
@@ -20,9 +23,12 @@ if __package__:
     )
     from .stock_analysis import add_bollinger_bands, add_moving_averages
 else:
-    from data_quality import pair_valid
+    from data_quality import daily_change, pair_valid
     from macro_analysis import (
+        FX_CHANGE_COLUMN,
         FX_COLUMN,
+        PRICE_CHANGE_COLUMN,
+        RATE_CHANGE_PP_COLUMN,
         FX_FILLED_COLUMN,
         FX_OUTLIER_COLUMN,
         PRICE_OUTLIER_COLUMN,
@@ -303,6 +309,13 @@ def _correlation(
     return float(pairs["returns"].corr(pairs["changes"])), None, None
 
 
+def _change_column(data: pd.DataFrame, column: str, source: str, kind: str) -> pd.Series:
+    """저장된 하루 변화 열을 쓰고, 없으면(이전 형식 데이터) 원천 값으로 계산한다."""
+    if column in data:
+        return pd.to_numeric(data[column], errors="coerce")
+    return daily_change(data[source], kind)
+
+
 def _macro_kpis(company_macro: pd.DataFrame | None) -> dict[str, dict]:
     """주식 거래일 기준으로 맞춘 환율·금리의 기간 변화와 주가 연관성."""
     missing_reason = "환율/금리 원천 데이터 없음"
@@ -329,15 +342,18 @@ def _macro_kpis(company_macro: pd.DataFrame | None) -> dict[str, dict]:
         (rate_valid.iloc[-1] - rate_valid.iloc[0]) * 100 if len(rate_valid) >= 2 else None
     )
 
-    returns = pd.to_numeric(data["종가"], errors="coerce").pct_change()
+    # 병합 단계에서 만든 하루 변화 열(등락률·변화율·변화폭)을 그대로 쓴다.
+    returns = _change_column(data, PRICE_CHANGE_COLUMN, "종가", "pct")
     # ffill한 날의 변화량은 0으로 보여 상관을 왜곡하므로 당일·전일 모두 실제 관측일만 쓴다.
     fx_pair_valid = pair_valid(fx_filled)
     rate_pair_valid = pair_valid(rate_filled)
     fx_corr, fx_corr_status, fx_corr_reason = _correlation(
-        returns, fx.pct_change(), fx_pair_valid
+        returns, _change_column(data, FX_CHANGE_COLUMN, FX_COLUMN, "pct"), fx_pair_valid
     )
     rate_corr, rate_corr_status, rate_corr_reason = _correlation(
-        returns, rate.diff(), rate_pair_valid
+        returns,
+        _change_column(data, RATE_CHANGE_PP_COLUMN, RATE_COLUMN, "diff"),
+        rate_pair_valid,
     )
 
     def series_metric(series: pd.Series, value, unit: str, **options) -> dict[str, Any]:

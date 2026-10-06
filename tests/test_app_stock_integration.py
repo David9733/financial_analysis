@@ -132,6 +132,12 @@ class AppStockIntegrationTests(unittest.TestCase):
                 "status": "no_comparison_period",
                 "reason": "관측일 부족",
             },
+            "treasury_3y_change_bp": {
+                "value": 16.1,
+                "unit": "bp",
+                "status": "available",
+                "reason": None,
+            },
         }
         run_analysis.return_value = result
 
@@ -145,6 +151,7 @@ class AppStockIntegrationTests(unittest.TestCase):
         self.assertIn("외부 요인 (환율, 금리)", html)
         self.assertIn("1,358원", html)
         self.assertIn("주가 수익률-환율 상관계수", html)
+        self.assertIn("+16.1bp (+0.161%p)", html)
 
     def test_invalid_stock_period_returns_400(self):
         response = self.client.post(
