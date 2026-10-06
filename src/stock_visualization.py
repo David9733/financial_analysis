@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 if __package__:
-    from .data_quality import IQR_MULTIPLIER, daily_change, iqr_bounds, pair_valid
+    from .data_quality import daily_change, iqr_bounds, pair_valid
     from .macro_analysis import (
         FX_COLUMN,
         FX_FILLED_COLUMN,
@@ -31,7 +31,7 @@ if __package__:
     )
     from .visualization import COLORS, configure_korean_font
 else:
-    from data_quality import IQR_MULTIPLIER, daily_change, iqr_bounds, pair_valid
+    from data_quality import daily_change, iqr_bounds, pair_valid
     from macro_analysis import (
         FX_COLUMN,
         FX_FILLED_COLUMN,
@@ -230,6 +230,18 @@ def create_macro_visualizations(market_macro: pd.DataFrame, charts_dir: Path) ->
         plt.close(fig)
 
 
+STATUS_MUTED_COLOR = "#64748B"
+
+
+def _outlier_status_text(outlier_count: int, bounds: tuple[float, float] | None) -> str:
+    """하루 변화 패널에 항상 표시할 이상치 판정 상태 문구."""
+    if bounds is None:
+        return "관측일 부족으로 판정 안 함"
+    if outlier_count:
+        return f"이상치 {outlier_count}일 (원인 확인 필요)"
+    return "이상치 0일"
+
+
 def create_daily_change_visualizations(market_macro: pd.DataFrame, charts_dir: Path) -> None:
     """하루 변화 분포와 IQR 경계를 그려 튀는 날(빨강)을 바로 보이게 한다."""
     if market_macro.empty:
@@ -269,12 +281,21 @@ def create_daily_change_visualizations(market_macro: pd.DataFrame, charts_dir: P
                     color=OUTLIER_COLOR,
                     s=28,
                     zorder=3,
-                    label=f"IQR 밖 {len(outliers)}일",
                 )
-                ax.legend(loc="upper left", frameon=False, fontsize=9)
+            # 이상치가 없거나 판정하지 않은 경우도 구분되도록 상태를 항상 표시한다.
+            ax.text(
+                0.01,
+                0.95,
+                _outlier_status_text(len(outliers), bounds),
+                transform=ax.transAxes,
+                va="top",
+                fontsize=9,
+                color=OUTLIER_COLOR if not outliers.empty else STATUS_MUTED_COLOR,
+                bbox={"facecolor": "white", "alpha": 0.8, "edgecolor": "none", "pad": 2},
+            )
             ax.set_ylabel(label)
             _finish_date_axis(ax)
-        axes[0, 0].set_title(f"{company} 하루 변화와 이상치(IQR {IQR_MULTIPLIER}배 경계)")
+        axes[0, 0].set_title(f"{company} 하루 변화와 이상치 (빨간 점선: 통상 범위)")
         fig.tight_layout()
         fig.savefig(charts_dir / f"daily_change_{code}.png", dpi=160, bbox_inches="tight")
         plt.close(fig)
