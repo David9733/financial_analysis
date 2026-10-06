@@ -9,8 +9,10 @@ import pandas as pd
 
 from src.macro_analysis import FX_COLUMN, merge_macro_with_prices, prepare_macro_series
 from src.stock_visualization import (
+    _create_monthly_volume_chart,
     _outlier_status_text,
     create_daily_change_visualizations,
+    monthly_volume_summary,
 )
 from src.visualization import _line_chart, create_single_company_charts
 
@@ -72,6 +74,40 @@ class SingleCompanyVisualizationTests(unittest.TestCase):
             self.assertGreater(len(figures[2].axes[0].containers), 0)
             self.assertTrue((Path(directory) / "operating_margin.png").exists())
             self.assertTrue((Path(directory) / "debt_ratio.png").exists())
+
+
+class MonthlyVolumeTests(unittest.TestCase):
+    def tearDown(self) -> None:
+        plt.close("all")
+
+    @staticmethod
+    def volume_frame(start: str, days: int) -> pd.DataFrame:
+        dates = pd.date_range(start, periods=days, freq="B")
+        return pd.DataFrame({"기준일": dates, "거래량": [1000 + index for index in range(days)]})
+
+    def test_summary_uses_mean_max_and_trading_days(self) -> None:
+        data = pd.DataFrame(
+            {
+                "기준일": pd.to_datetime(["2026-01-05", "2026-01-06", "2026-02-02"]),
+                "거래량": [100, 300, 500],
+            }
+        )
+
+        summary = monthly_volume_summary(data)
+
+        self.assertEqual(summary["월평균거래량"].tolist(), [200.0, 500.0])
+        self.assertEqual(summary["최대일거래량"].tolist(), [300, 500])
+        self.assertEqual(summary["거래일수"].tolist(), [2, 1])
+
+    def test_chart_only_for_six_months_or_more(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            long_path = Path(directory) / "long.png"
+            short_path = Path(directory) / "short.png"
+            _create_monthly_volume_chart(self.volume_frame("2026-01-01", 150), "테스트", long_path)
+            _create_monthly_volume_chart(self.volume_frame("2026-01-01", 60), "테스트", short_path)
+
+            self.assertTrue(long_path.exists())
+            self.assertFalse(short_path.exists())
 
 
 class DailyChangeVisualizationTests(unittest.TestCase):

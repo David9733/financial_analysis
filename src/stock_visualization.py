@@ -10,6 +10,7 @@ matplotlib.use("Agg")
 
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 import pandas as pd
 
 if __package__:
@@ -79,6 +80,66 @@ def _create_volume_chart(data: pd.DataFrame, company: str, output_path: Path) ->
     ax.set_ylabel("주")
     ax.plot([], [], color="#E53935", linewidth=7, label="매수 우세 (종가 ≥ 시가)")
     ax.plot([], [], color="#1E6BD6", linewidth=7, label="매도 우세 (종가 < 시가)")
+    ax.legend(loc="upper left", frameon=False, fontsize=9)
+    _finish_date_axis(ax)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=160, bbox_inches="tight")
+    plt.close(fig)
+
+
+MONTHLY_VOLUME_MIN_MONTHS = 6
+
+
+def monthly_volume_summary(data: pd.DataFrame) -> pd.DataFrame:
+    """일별 거래량을 월말 기준으로 묶어 월평균, 그달 최대 하루 거래량, 거래일 수를 만든다.
+
+    시작·마지막 달이나 연휴가 낀 달은 거래일이 적어 합계가 작게 보이므로 평균을 쓴다.
+    """
+    volume = pd.to_numeric(
+        data.set_index("기준일").sort_index()["거래량"], errors="coerce"
+    ).dropna()
+    monthly = volume.resample("ME").agg(["mean", "max", "count"])
+    monthly.columns = ["월평균거래량", "최대일거래량", "거래일수"]
+    return monthly[monthly["거래일수"] > 0]
+
+
+def _create_monthly_volume_chart(data: pd.DataFrame, company: str, output_path: Path) -> None:
+    """긴 기간의 거래량 흐름을 월 단위로 보여 주되, 하루 폭증은 최대값으로 남긴다."""
+    monthly = monthly_volume_summary(data)
+    if len(monthly) < MONTHLY_VOLUME_MIN_MONTHS:
+        return
+    # 월말 날짜 대신 그달 가운데에 막대를 놓아 날짜축과 맞춘다.
+    centers = monthly.index - pd.Timedelta(days=15)
+    fig, ax = plt.subplots(figsize=(10, 4.5))
+    bars = ax.bar(
+        centers, monthly["월평균거래량"], width=24, color="#93B4E8", label="월평균 일거래량"
+    )
+    ax.plot(
+        centers,
+        monthly["최대일거래량"],
+        color="#E53935",
+        marker="o",
+        markersize=4,
+        linewidth=1,
+        label="그달 최대 하루 거래량",
+    )
+    # 거래일 수는 막대 아래쪽 안에 적어 최대 거래량 점과 겹치지 않게 한다.
+    for bar, days in zip(bars, monthly["거래일수"]):
+        ax.annotate(
+            f"{int(days)}일",
+            (bar.get_x() + bar.get_width() / 2, 0),
+            xytext=(0, 3),
+            textcoords="offset points",
+            ha="center",
+            va="bottom",
+            fontsize=7,
+            color="#1E3A8A",
+        )
+    ax.set_title(f"{company} 월별 거래량 (막대 안 숫자: 거래일 수)")
+    ax.set_ylabel("주")
+    ax.yaxis.set_major_formatter(
+        mticker.FuncFormatter(lambda value, _: f"{value:,.0f}")
+    )
     ax.legend(loc="upper left", frameon=False, fontsize=9)
     _finish_date_axis(ax)
     fig.tight_layout()
@@ -331,6 +392,7 @@ def create_stock_visualizations(
         _create_price_chart(data, company, charts_dir / "stock_price.png")
 
         _create_volume_chart(data, company, charts_dir / "stock_volume.png")
+        _create_monthly_volume_chart(data, company, charts_dir / "stock_volume_monthly.png")
         if investor_summary is not None and not investor_summary.empty:
             _create_investor_pie(
                 investor_summary,
@@ -365,6 +427,9 @@ def create_stock_visualizations(
         data = data.sort_values("기준일")
         _create_price_chart(data, company, charts_dir / f"stock_price_{code}.png")
         _create_volume_chart(data, company, charts_dir / f"stock_volume_{code}.png")
+        _create_monthly_volume_chart(
+            data, company, charts_dir / f"stock_volume_monthly_{code}.png"
+        )
         if investor_summary is not None and not investor_summary.empty:
             investor_data = investor_summary[investor_summary["종목코드"] == code]
             if not investor_data.empty:
