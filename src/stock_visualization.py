@@ -13,6 +13,16 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 if __package__:
+    from .data_quality import IQR_MULTIPLIER, daily_change, iqr_bounds, pair_valid
+    from .macro_analysis import (
+        FX_COLUMN,
+        FX_FILLED_COLUMN,
+        FX_OUTLIER_COLUMN,
+        PRICE_OUTLIER_COLUMN,
+        RATE_COLUMN,
+        RATE_FILLED_COLUMN,
+        RATE_OUTLIER_COLUMN,
+    )
     from .stock_analysis import (
         MOVING_AVERAGE_WINDOWS,
         add_bollinger_bands,
@@ -21,6 +31,16 @@ if __package__:
     )
     from .visualization import COLORS, configure_korean_font
 else:
+    from data_quality import IQR_MULTIPLIER, daily_change, iqr_bounds, pair_valid
+    from macro_analysis import (
+        FX_COLUMN,
+        FX_FILLED_COLUMN,
+        FX_OUTLIER_COLUMN,
+        PRICE_OUTLIER_COLUMN,
+        RATE_COLUMN,
+        RATE_FILLED_COLUMN,
+        RATE_OUTLIER_COLUMN,
+    )
     from stock_analysis import (
         MOVING_AVERAGE_WINDOWS,
         add_bollinger_bands,
@@ -136,6 +156,128 @@ def _create_investor_pie(data: pd.DataFrame, company: str, output_path: Path) ->
     fig.tight_layout()
     fig.savefig(output_path, dpi=160, bbox_inches="tight")
     plt.close(fig)
+
+
+OUTLIER_COLOR = "#E53935"
+
+
+def _true_rows(data: pd.DataFrame, column: str) -> pd.DataFrame:
+    if column not in data:
+        return data.iloc[0:0]
+    return data[data[column].fillna(False).astype(bool)]
+
+
+def _plot_close_with_macro(
+    ax, data: pd.DataFrame, column: str, flag: str, outlier: str, label: str, color: str
+) -> None:
+    """왼쪽 축에 종가, 오른쪽 축에 매크로 값을 같은 거래일 기준으로 그린다."""
+    ax.plot(data["기준일"], data["종가"], color=COLORS[0], linewidth=1.6, label="종가")
+    ax.set_ylabel("종가(원)")
+    macro_ax = ax.twinx()
+    macro_ax.plot(data["기준일"], data[column], color=color, linewidth=1.4, label=label)
+    filled = _true_rows(data, flag)
+    if not filled.empty:
+        macro_ax.scatter(
+            filled["기준일"],
+            filled[column],
+            color=color,
+            marker="x",
+            s=24,
+            zorder=3,
+            label="직전 값으로 보간",
+        )
+    outliers = _true_rows(data, outlier)
+    if not outliers.empty:
+        macro_ax.scatter(
+            outliers["기준일"],
+            outliers[column],
+            color=OUTLIER_COLOR,
+            s=26,
+            zorder=4,
+            label="하루 변화 이상치",
+        )
+    macro_ax.set_ylabel(label)
+    handles, labels = ax.get_legend_handles_labels()
+    macro_handles, macro_labels = macro_ax.get_legend_handles_labels()
+    ax.legend(handles + macro_handles, labels + macro_labels, loc="upper left", frameon=False, fontsize=9)
+    _finish_date_axis(ax)
+
+
+def create_macro_visualizations(market_macro: pd.DataFrame, charts_dir: Path) -> None:
+    """기업별 주가와 원/달러 환율·국고채 3년 금리를 거래일 기준으로 비교한다."""
+    if market_macro.empty:
+        return
+    has_fx = market_macro[FX_COLUMN].notna().any()
+    has_rate = market_macro[RATE_COLUMN].notna().any()
+    if not (has_fx or has_rate):
+        return
+    charts_dir.mkdir(parents=True, exist_ok=True)
+    configure_korean_font()
+    panels = []
+    if has_fx:
+        panels.append((FX_COLUMN, FX_FILLED_COLUMN, FX_OUTLIER_COLUMN, "원/달러 환율(원)", "#F59E0B"))
+    if has_rate:
+        panels.append((RATE_COLUMN, RATE_FILLED_COLUMN, RATE_OUTLIER_COLUMN, "국고채 3년(%)", "#7656C9"))
+
+    for (company, code), data in market_macro.groupby(["기업명", "종목코드"], sort=False):
+        data = data.sort_values("기준일")
+        fig, axes = plt.subplots(len(panels), 1, figsize=(10, 4.2 * len(panels)), sharex=True, squeeze=False)
+        for ax, (column, flag, outlier, label, color) in zip(axes[:, 0], panels):
+            _plot_close_with_macro(ax, data, column, flag, outlier, label, color)
+        axes[0, 0].set_title(f"{company} 주가와 환율, 금리")
+        fig.tight_layout()
+        fig.savefig(charts_dir / f"macro_{code}.png", dpi=160, bbox_inches="tight")
+        plt.close(fig)
+
+
+def create_daily_change_visualizations(market_macro: pd.DataFrame, charts_dir: Path) -> None:
+    """하루 변화 분포와 IQR 경계를 그려 튀는 날(빨강)을 바로 보이게 한다."""
+    if market_macro.empty:
+        return
+    charts_dir.mkdir(parents=True, exist_ok=True)
+    configure_korean_font()
+    # (값 열, 보간 열, 이상치 열, 변화 방식, 표시 배율, 축 이름, 선 색)
+    series_specs = [
+        ("종가", None, PRICE_OUTLIER_COLUMN, "pct", 1, "종가 변화율(%)", COLORS[0]),
+        (FX_COLUMN, FX_FILLED_COLUMN, FX_OUTLIER_COLUMN, "pct", 1, "환율 변화율(%)", "#F59E0B"),
+        (RATE_COLUMN, RATE_FILLED_COLUMN, RATE_OUTLIER_COLUMN, "diff", 100, "금리 변화(bp)", "#7656C9"),
+    ]
+    for (company, code), data in market_macro.groupby(["기업명", "종목코드"], sort=False):
+        data = data.sort_values("기준일").reset_index(drop=True)
+        specs = [spec for spec in series_specs if data[spec[0]].notna().any()]
+        if not specs:
+            continue
+        fig, axes = plt.subplots(len(specs), 1, figsize=(10, 3.2 * len(specs)), sharex=True, squeeze=False)
+        for ax, (column, filled_column, outlier_column, kind, scale, label, color) in zip(axes[:, 0], specs):
+            changes = daily_change(data[column], kind)
+            filled = (
+                data[filled_column]
+                if filled_column is not None
+                else pd.Series(False, index=data.index)
+            )
+            bounds = iqr_bounds(changes, pair_valid(filled))
+            ax.bar(data["기준일"], changes * scale, color=color, width=1, alpha=0.55)
+            ax.axhline(0, color="#94A3B8", linewidth=0.8)
+            if bounds is not None:
+                for bound in bounds:
+                    ax.axhline(bound * scale, color=OUTLIER_COLOR, linewidth=0.9, linestyle="--")
+            outliers = data[data[outlier_column].fillna(False).astype(bool)]
+            if not outliers.empty:
+                ax.scatter(
+                    outliers["기준일"],
+                    changes.loc[outliers.index] * scale,
+                    color=OUTLIER_COLOR,
+                    s=28,
+                    zorder=3,
+                    label=f"IQR 밖 {len(outliers)}일",
+                )
+                ax.legend(loc="upper left", frameon=False, fontsize=9)
+            ax.set_ylabel(label)
+            _finish_date_axis(ax)
+        axes[0, 0].set_title(f"{company} 하루 변화와 이상치(IQR {IQR_MULTIPLIER}배 경계)")
+        fig.tight_layout()
+        fig.savefig(charts_dir / f"daily_change_{code}.png", dpi=160, bbox_inches="tight")
+        plt.close(fig)
 
 
 def create_stock_visualizations(

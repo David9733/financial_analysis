@@ -113,7 +113,38 @@ class AppStockIntegrationTests(unittest.TestCase):
         self.assertIn("ROE 10.2%", response.get_data(as_text=True))
         self.assertIn("기업 간 차이", response.get_data(as_text=True))
         self.assertIn("기업별 KPI 차이 요약", response.get_data(as_text=True))
+        self.assertNotIn("외부 요인 (환율, 금리)", response.get_data(as_text=True))
         run_analysis.assert_called_once()
+
+    @patch("src.app.run_integrated_analysis")
+    def test_result_page_renders_macro_kpis(self, run_analysis):
+        result = self.fake_result()
+        result.kpi_payload["companies"][0]["macro_kpi"] = {
+            "usd_krw_latest": {
+                "value": 1358.4,
+                "unit": "원",
+                "status": "available",
+                "reason": None,
+            },
+            "corr_return_usd_krw": {
+                "value": None,
+                "unit": "",
+                "status": "no_comparison_period",
+                "reason": "관측일 부족",
+            },
+        }
+        run_analysis.return_value = result
+
+        response = self.client.post(
+            "/analyze",
+            data={"company": "삼성전자", "number_of_years": "5", "stock_period": "1y"},
+        )
+        html = response.get_data(as_text=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("외부 요인 (환율, 금리)", html)
+        self.assertIn("1,358원", html)
+        self.assertIn("주가 수익률-환율 상관계수", html)
 
     def test_invalid_stock_period_returns_400(self):
         response = self.client.post(

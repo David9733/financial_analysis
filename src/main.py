@@ -29,11 +29,36 @@ if __package__:  # ``python -m src.main`` 또는 패키지 import
         empty_investor_summary,
         get_investor_trading,
     )
+    from .data_quality import (
+        ACTION_SCALE_FIX,
+        LOG_COLUMNS,
+        QualityLog,
+        correct_scale_errors,
+    )
     from .gpt_analysis import GPTAnalysisError, analyze_kpis
     from .kpi_analysis import build_kpi_payload
+    from .macro_analysis import (
+        FX_COLUMN,
+        MACRO_LOOKBACK_DAYS,
+        MARKET_MACRO_COLUMNS,
+        RATE_COLUMN,
+        merge_macro_with_prices,
+        prepare_macro_series,
+    )
+    from .macro_api import (
+        ExchangeRateClient,
+        InterestRateClient,
+        MacroAPIError,
+        get_ecos_api_key,
+        get_exim_api_key,
+    )
     from .stock_analysis import prepare_stock_prices, summarize_stock_prices
     from .stock_api import StockAPIError, StockClient, get_stock_api_key
-    from .stock_visualization import create_stock_visualizations
+    from .stock_visualization import (
+        create_daily_change_visualizations,
+        create_macro_visualizations,
+        create_stock_visualizations,
+    )
 else:  # ``python src/main.py``로 직접 실행
     from dart_api import CompanyNotFoundError, DartAPIError, DartClient, get_api_key
     from financial_analysis import (
@@ -49,11 +74,36 @@ else:  # ``python src/main.py``로 직접 실행
         empty_investor_summary,
         get_investor_trading,
     )
+    from data_quality import (
+        ACTION_SCALE_FIX,
+        LOG_COLUMNS,
+        QualityLog,
+        correct_scale_errors,
+    )
     from gpt_analysis import GPTAnalysisError, analyze_kpis
     from kpi_analysis import build_kpi_payload
+    from macro_analysis import (
+        FX_COLUMN,
+        MACRO_LOOKBACK_DAYS,
+        MARKET_MACRO_COLUMNS,
+        RATE_COLUMN,
+        merge_macro_with_prices,
+        prepare_macro_series,
+    )
+    from macro_api import (
+        ExchangeRateClient,
+        InterestRateClient,
+        MacroAPIError,
+        get_ecos_api_key,
+        get_exim_api_key,
+    )
     from stock_analysis import prepare_stock_prices, summarize_stock_prices
     from stock_api import StockAPIError, StockClient, get_stock_api_key
-    from stock_visualization import create_stock_visualizations
+    from stock_visualization import (
+        create_daily_change_visualizations,
+        create_macro_visualizations,
+        create_stock_visualizations,
+    )
 
 
 # 초보 사용자는 아래 기업명과 기간만 수정하면 된다.
@@ -103,6 +153,108 @@ class IntegratedAnalysisResult:
     kpi_payload: dict = field(default_factory=dict)
     gpt_insights: list[dict] = field(default_factory=list)
     gpt_comparisons: list[dict] = field(default_factory=list)
+    market_macro: pd.DataFrame = field(
+        default_factory=lambda: pd.DataFrame(columns=MARKET_MACRO_COLUMNS)
+    )
+    quality_log: pd.DataFrame = field(
+        default_factory=lambda: pd.DataFrame(columns=LOG_COLUMNS)
+    )
+
+
+PRICE_LEVEL_COLUMNS = ("시가", "고가", "저가")
+
+
+def correct_stock_price_errors(
+    frame: pd.DataFrame, company_name: str, log: QualityLog
+) -> pd.DataFrame:
+    """종가의 소수점·단위 오류를 고치고 같은 배율로 튄 시가·고가·저가도 함께 고친다."""
+    corrected, multiplier = correct_scale_errors(
+        frame, "종가", log, target="종가", company=company_name
+    )
+    for index in multiplier[multiplier != 1].index:
+        scale = multiplier.at[index]
+        original_close = frame.at[index, "종가"]
+        for column in PRICE_LEVEL_COLUMNS:
+            value = corrected.at[index, column]
+            if pd.isna(value) or value <= 0 or original_close <= 0:
+                continue
+            # 같은 날 시가·고가·저가는 종가와 비슷한 수준이므로, 원래 종가와 같은
+            # 수준(±50%)이면 같은 배율로 잘못 입력된 것으로 본다.
+            if 0.5 <= value / original_close <= 2:
+                corrected.at[index, column] = value * scale
+                log.add(
+                    column,
+                    corrected.at[index, "기준일"],
+                    ACTION_SCALE_FIX,
+                    value,
+                    value * scale,
+                    "종가와 같은 배율의 소수점 또는 단위 오류",
+                    company_name,
+                )
+    if (multiplier != 1).any():
+        first_close = corrected["종가"].iloc[0]
+        corrected["정규화주가"] = (
+            corrected["종가"] / first_close * 100 if first_close not in (None, 0) else pd.NA
+        )
+    return corrected.reset_index(drop=True)
+
+
+def collect_market_macro(
+    stock_prices: pd.DataFrame,
+    warnings: list[str],
+    progress_callback: ProgressCallback | None = None,
+    log: QualityLog | None = None,
+) -> pd.DataFrame:
+    """주가 거래일 범위의 환율·금리를 수집해 거래일 기준으로 병합한다.
+
+    API 키가 없거나 호출이 실패해도 경고만 남기고 빈 열로 계속 진행한다.
+    """
+    if stock_prices.empty:
+        return pd.DataFrame(columns=MARKET_MACRO_COLUMNS)
+
+    trading_start = stock_prices["기준일"].min().date()
+    trading_end = stock_prices["기준일"].max().date()
+    # 첫 거래일의 매크로 값이 비었을 때 ffill할 직전 값을 확보한다.
+    fetch_start = trading_start - timedelta(days=MACRO_LOOKBACK_DAYS)
+
+    _notify_progress(progress_callback, "macro", 71, "원/달러 환율을 수집하고 있습니다.")
+    fx_rows: list = []
+    try:
+        fx_client = ExchangeRateClient(
+            get_exim_api_key(PROJECT_ROOT), cache_path=CACHE_DIR / "exim_usd_krw.json"
+        )
+        fx_series = fx_client.get_usd_krw(fetch_start, trading_end)
+        fx_rows = fx_series.rows
+        if fx_series.failed_dates:
+            warnings.append(
+                f"환율: {len(fx_series.failed_dates)}개 날짜 조회에 실패해 직전 값으로 채웠습니다."
+            )
+    except (MacroAPIError, ValueError) as error:
+        warnings.append(f"환율 데이터를 불러오지 못했습니다. ({error})")
+
+    _notify_progress(progress_callback, "macro", 74, "국고채 3년 금리를 수집하고 있습니다.")
+    rate_rows: list = []
+    try:
+        rate_client = InterestRateClient(get_ecos_api_key(PROJECT_ROOT))
+        rate_rows = rate_client.get_treasury_3y(fetch_start, trading_end).rows
+    except (MacroAPIError, ValueError) as error:
+        warnings.append(f"금리 데이터를 불러오지 못했습니다. ({error})")
+
+    # 환율·금리를 모두 못 받아도 종가 하루 변화 이상치는 표시한다.
+    merged = merge_macro_with_prices(
+        stock_prices,
+        prepare_macro_series(fx_rows, FX_COLUMN),
+        prepare_macro_series(rate_rows, RATE_COLUMN),
+        log=log,
+    )
+    LOGGER.info(
+        "macro_merged trading_rows=%d merged_rows=%d fx_rows=%d rate_rows=%d",
+        len(stock_prices),
+        len(merged),
+        len(fx_rows),
+        len(rate_rows),
+    )
+    return merged
 
 
 def configure_console() -> None:
@@ -257,6 +409,7 @@ def run_integrated_analysis(
     warnings: list[str] = []
     price_frames: list[pd.DataFrame] = []
     investor_frames: list[pd.DataFrame] = []
+    quality_log = QualityLog()
 
     stock_client = None
     try:
@@ -293,6 +446,7 @@ def run_integrated_analysis(
         if frame.empty:
             warnings.append(f"{company_name}: 선택 기간의 주식시세 데이터가 없습니다.")
             continue
+        frame = correct_stock_price_errors(frame, company_name, quality_log)
         price_frames.append(frame)
         actual_start = frame["기준일"].min().date()
         actual_end = frame["기준일"].max().date()
@@ -338,7 +492,31 @@ def run_integrated_analysis(
         stock_summary = summarize_stock_prices(stock_prices)
         investor_summary = empty_investor_summary()
 
-    kpi_payload = build_kpi_payload(financial, stock_prices, stock_period)
+    market_macro = collect_market_macro(
+        stock_prices, warnings, progress_callback, log=quality_log
+    )
+    if not market_macro.empty:
+        market_macro.to_csv(
+            target_output_dir / "market_macro.csv", index=False, encoding="utf-8-sig"
+        )
+        create_macro_visualizations(market_macro, target_output_dir / "stock_charts")
+        create_daily_change_visualizations(
+            market_macro, target_output_dir / "stock_charts"
+        )
+
+    quality_frame = quality_log.to_frame()
+    if not quality_frame.empty:
+        quality_frame.to_csv(
+            target_output_dir / "data_quality_log.csv", index=False, encoding="utf-8-sig"
+        )
+        warnings.append(quality_log.summary_text())
+    LOGGER.info(
+        "data_quality records=%d %s", len(quality_frame), quality_log.summary_text()
+    )
+
+    kpi_payload = build_kpi_payload(
+        financial, stock_prices, stock_period, market_macro=market_macro
+    )
     (target_output_dir / "kpi_analysis.json").write_text(
         json.dumps(kpi_payload, ensure_ascii=False, indent=2), encoding="utf-8"
     )
@@ -386,6 +564,8 @@ def run_integrated_analysis(
         kpi_payload=kpi_payload,
         gpt_insights=gpt_insights,
         gpt_comparisons=gpt_comparisons,
+        market_macro=market_macro,
+        quality_log=quality_frame,
     )
 
 

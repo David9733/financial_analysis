@@ -8,9 +8,49 @@ from typing import Any
 import pandas as pd
 
 if __package__:
+    from .data_quality import pair_valid
+    from .macro_analysis import (
+        FX_COLUMN,
+        FX_FILLED_COLUMN,
+        FX_OUTLIER_COLUMN,
+        PRICE_OUTLIER_COLUMN,
+        RATE_COLUMN,
+        RATE_FILLED_COLUMN,
+        RATE_OUTLIER_COLUMN,
+    )
     from .stock_analysis import add_bollinger_bands, add_moving_averages
 else:
+    from data_quality import pair_valid
+    from macro_analysis import (
+        FX_COLUMN,
+        FX_FILLED_COLUMN,
+        FX_OUTLIER_COLUMN,
+        PRICE_OUTLIER_COLUMN,
+        RATE_COLUMN,
+        RATE_FILLED_COLUMN,
+        RATE_OUTLIER_COLUMN,
+    )
     from stock_analysis import add_bollinger_bands, add_moving_averages
+
+
+MIN_CORRELATION_OBSERVATIONS = 20
+MACRO_KPI_UNITS = {
+    "usd_krw_latest": "원",
+    "usd_krw_change": "%",
+    "treasury_3y_latest": "%",
+    "treasury_3y_change_bp": "bp",
+    "corr_return_usd_krw": "",
+    "corr_return_treasury_3y": "",
+    "macro_filled_days": "일",
+    "price_outlier_days": "일",
+    "usd_krw_outlier_days": "일",
+    "treasury_3y_outlier_days": "일",
+}
+OUTLIER_KPI_COLUMNS = {
+    "price_outlier_days": PRICE_OUTLIER_COLUMN,
+    "usd_krw_outlier_days": FX_OUTLIER_COLUMN,
+    "treasury_3y_outlier_days": RATE_OUTLIER_COLUMN,
+}
 
 
 def _number(value: Any, digits: int = 2) -> float | None:
@@ -247,10 +287,107 @@ def _market_kpis(company_prices: pd.DataFrame) -> dict[str, dict]:
     }
 
 
+def _correlation(
+    returns: pd.Series, changes: pd.Series, valid: pd.Series
+) -> tuple[float | None, str | None, str | None]:
+    """보간하지 않은 연속 관측일의 일간 수익률·매크로 변화 상관계수."""
+    pairs = pd.DataFrame({"returns": returns, "changes": changes})[valid].dropna()
+    if len(pairs) < MIN_CORRELATION_OBSERVATIONS:
+        return (
+            None,
+            "no_comparison_period",
+            f"상관계수 계산에 필요한 관측일({MIN_CORRELATION_OBSERVATIONS}일)이 부족함",
+        )
+    if pairs["returns"].std() == 0 or pairs["changes"].std() == 0:
+        return None, "missing", "변동이 없어 상관계수를 계산할 수 없음"
+    return float(pairs["returns"].corr(pairs["changes"])), None, None
+
+
+def _macro_kpis(company_macro: pd.DataFrame | None) -> dict[str, dict]:
+    """주식 거래일 기준으로 맞춘 환율·금리의 기간 변화와 주가 연관성."""
+    missing_reason = "환율/금리 원천 데이터 없음"
+    if company_macro is None or company_macro.empty:
+        return {
+            name: _metric(None, unit, status="missing", reason=missing_reason)
+            for name, unit in MACRO_KPI_UNITS.items()
+        }
+
+    data = company_macro.sort_values("기준일").reset_index(drop=True)
+    fx = pd.to_numeric(data[FX_COLUMN], errors="coerce")
+    rate = pd.to_numeric(data[RATE_COLUMN], errors="coerce")
+    fx_filled = data[FX_FILLED_COLUMN].fillna(False).astype(bool)
+    rate_filled = data[RATE_FILLED_COLUMN].fillna(False).astype(bool)
+    fx_valid = fx.dropna()
+    rate_valid = rate.dropna()
+
+    fx_change = (
+        _safe_ratio(fx_valid.iloc[-1] - fx_valid.iloc[0], fx_valid.iloc[0])
+        if len(fx_valid) >= 2
+        else None
+    )
+    rate_change_bp = (
+        (rate_valid.iloc[-1] - rate_valid.iloc[0]) * 100 if len(rate_valid) >= 2 else None
+    )
+
+    returns = pd.to_numeric(data["종가"], errors="coerce").pct_change()
+    # ffill한 날의 변화량은 0으로 보여 상관을 왜곡하므로 당일·전일 모두 실제 관측일만 쓴다.
+    fx_pair_valid = pair_valid(fx_filled)
+    rate_pair_valid = pair_valid(rate_filled)
+    fx_corr, fx_corr_status, fx_corr_reason = _correlation(
+        returns, fx.pct_change(), fx_pair_valid
+    )
+    rate_corr, rate_corr_status, rate_corr_reason = _correlation(
+        returns, rate.diff(), rate_pair_valid
+    )
+
+    def series_metric(series: pd.Series, value, unit: str, **options) -> dict[str, Any]:
+        if series.empty:
+            return _metric(None, unit, status="missing", reason=missing_reason)
+        return _metric(value, unit, **options)
+
+    return {
+        "usd_krw_latest": series_metric(
+            fx_valid, fx_valid.iloc[-1] if not fx_valid.empty else None, "원"
+        ),
+        "usd_krw_change": series_metric(fx_valid, fx_change, "%"),
+        "treasury_3y_latest": series_metric(
+            rate_valid,
+            rate_valid.iloc[-1] if not rate_valid.empty else None,
+            "%",
+            digits=3,
+        ),
+        "treasury_3y_change_bp": series_metric(rate_valid, rate_change_bp, "bp", digits=1),
+        "corr_return_usd_krw": series_metric(
+            fx_valid, fx_corr, "", status=fx_corr_status, reason=fx_corr_reason
+        ),
+        "corr_return_treasury_3y": series_metric(
+            rate_valid, rate_corr, "", status=rate_corr_status, reason=rate_corr_reason
+        ),
+        "macro_filled_days": _metric(
+            int((fx_filled | rate_filled).sum()), "일", digits=0
+        ),
+        **{
+            name: _outlier_days(data, column, source)
+            for (name, column), source in zip(
+                OUTLIER_KPI_COLUMNS.items(),
+                (data["종가"].dropna(), fx_valid, rate_valid),
+            )
+        },
+    }
+
+
+def _outlier_days(data: pd.DataFrame, column: str, source: pd.Series) -> dict[str, Any]:
+    """하루 변화 IQR 밖으로 표시된 거래일 수. 원천 값이 없으면 missing."""
+    if column not in data or source.empty:
+        return _metric(None, "일", status="missing", reason="이상치 판정 데이터 없음")
+    return _metric(int(data[column].fillna(False).astype(bool).sum()), "일", digits=0)
+
+
 def build_kpi_payload(
     financial: pd.DataFrame,
     stock_prices: pd.DataFrame,
     stock_period: str,
+    market_macro: pd.DataFrame | None = None,
 ) -> dict[str, Any]:
     """기업별 최신 재무연도와 선택 주가기간의 KPI JSON을 만든다."""
     companies = []
@@ -282,10 +419,15 @@ def build_kpi_payload(
                 "stock_period": stock_period,
                 "financial_kpi": financial_kpi,
                 "market_kpi": _market_kpis(company_prices),
+                "macro_kpi": _macro_kpis(
+                    market_macro[market_macro["기업명"] == company_name]
+                    if market_macro is not None and not market_macro.empty
+                    else None
+                ),
             }
         )
     return {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "generated_on": date.today().isoformat(),
         "companies": companies,
     }

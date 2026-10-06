@@ -72,7 +72,7 @@ code { padding: 8px 11px; border: 1px solid var(--line); border-radius: 999px; c
 .progress-track { overflow: hidden; height: 10px; margin-top: 22px; border-radius: 999px; background: #e6edf5; }
 .progress-track span { display: block; width: 0; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--accent), var(--mint)); transition: width .35s ease; }
 .analysis-progress > p { margin: 14px 0 0; color: var(--muted); }
-.progress-steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 22px 0 0; padding: 0; list-style: none; }
+.progress-steps { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin: 22px 0 0; padding: 0; list-style: none; }
 .progress-steps li { padding: 11px 12px; border: 1px solid var(--line); border-radius: 12px; color: var(--muted); background: #f8fafc; font-size: 12px; text-align: center; }
 .progress-steps li.is-active { border-color: var(--accent); color: var(--accent); background: #eaf3fc; font-weight: 800; }
 .progress-steps li.is-complete { border-color: #a7e3cf; color: #0b7657; background: #eefbf6; }
@@ -94,6 +94,7 @@ code { padding: 8px 11px; border: 1px solid var(--line); border-radius: 999px; c
 .kpi-company-heading h3, .insight-card h3 { margin: 0; font-size: 21px; }
 .kpi-company-heading span { color: var(--muted); font-size: 12px; }
 .kpi-groups { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+.kpi-groups > .kpi-group-wide { grid-column: 1 / -1; }
 .kpi-groups h4, .insight-card h4 { margin: 0 0 12px; font-size: 14px; }
 .kpi-list { margin: 0; }
 .kpi-list div { display: flex; justify-content: space-between; gap: 12px; padding: 9px 0; border-bottom: 1px solid #edf2f7; }

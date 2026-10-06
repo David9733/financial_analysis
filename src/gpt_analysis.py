@@ -20,6 +20,7 @@ else:
 
 DEFAULT_MODEL = "gpt-4o-mini"
 MAX_VALIDATION_ATTEMPTS = 3
+KPI_GROUPS = ("financial_kpi", "market_kpi", "macro_kpi")
 
 
 class GPTAnalysisError(RuntimeError):
@@ -102,7 +103,7 @@ def _payload_lookup(payload: dict[str, Any]) -> dict[str, dict[str, dict[str, An
     lookup: dict[str, dict[str, dict[str, Any]]] = {}
     for company in payload.get("companies", []):
         metrics = {}
-        for group_name in ("financial_kpi", "market_kpi"):
+        for group_name in KPI_GROUPS:
             metrics.update(company.get(group_name, {}))
         for history in company.get("financial_history", []):
             period = history.get("period")
@@ -120,7 +121,7 @@ def _allowed_numbers(company: dict[str, Any]) -> list[float]:
     if period and str(period).isdigit():
         allowed.append(float(period))
     allowed.extend(float(item) for item in re.findall(r"\d+", str(company.get("stock_period", ""))))
-    for group_name in ("financial_kpi", "market_kpi"):
+    for group_name in KPI_GROUPS:
         for metric in company.get(group_name, {}).values():
             if metric.get("status") != "available":
                 continue
@@ -160,7 +161,7 @@ def _validate_language(text: str) -> None:
 
 def _canonical_metric_key(metric_key: str) -> str:
     """모델이 JSON 경로를 붙여 반환해도 내부 KPI 키로 정규화한다."""
-    for prefix in ("financial_kpi.", "market_kpi."):
+    for prefix in (f"{group_name}." for group_name in KPI_GROUPS):
         if metric_key.startswith(prefix):
             return metric_key[len(prefix) :]
     return metric_key
@@ -275,7 +276,7 @@ def _fallback_company_insight(company: dict[str, Any]) -> CompanyInsight:
     """모델이 누락한 기업에 대해 숫자를 새로 만들지 않는 최소 인사이트를 구성한다."""
     available = {
         key
-        for group_name in ("financial_kpi", "market_kpi")
+        for group_name in KPI_GROUPS
         for key, metric in company.get(group_name, {}).items()
         if metric.get("status") == "available" and metric.get("value") is not None
     }

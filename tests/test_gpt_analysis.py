@@ -185,6 +185,36 @@ class GPTAnalysisTests(unittest.TestCase):
         )
 
     @patch("src.gpt_analysis.get_openai_api_key", return_value="test-key")
+    def test_accepts_macro_kpi_evidence_and_numbers(self, _api_key):
+        payload = self.payload()
+        payload["companies"][0]["macro_kpi"] = {
+            "corr_return_usd_krw": {
+                "value": -0.31,
+                "unit": "",
+                "status": "available",
+                "reason": None,
+            }
+        }
+        parsed = self.parsed()
+        parsed.analyses[0].market = InsightSection(
+            summary="일간 수익률과 환율 변화의 상관계수는 -0.31로 반대 방향으로 함께 움직이는 경향이 있습니다.",
+            evidence_keys=["macro_kpi.corr_return_usd_krw"],
+        )
+        client = Mock()
+        client.responses.parse.return_value = SimpleNamespace(
+            output_parsed=parsed, output=[]
+        )
+        with patch("openai.OpenAI", return_value=client):
+            result = analyze_kpis(payload, Path("."))
+
+        self.assertEqual(client.responses.parse.call_count, 1)
+        self.assertEqual(
+            result["analyses"][0]["market"]["evidence_keys"],
+            ["corr_return_usd_krw"],
+        )
+        self.assertIn("-0.31", result["analyses"][0]["market"]["summary"])
+
+    @patch("src.gpt_analysis.get_openai_api_key", return_value="test-key")
     def test_retries_invalid_single_company_response_and_accepts_correction(self, _api_key):
         corrected = self.parsed()
         invalid = corrected.model_copy(deep=True)

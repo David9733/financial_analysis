@@ -81,6 +81,16 @@ KPI_LABELS = {
     "recent_volume_change": "최근 거래량 변화율",
     "price_to_ma20": "20일 이동평균 대비",
     "bollinger_position": "볼린저밴드 내 위치",
+    "usd_krw_latest": "원/달러 환율(최근)",
+    "usd_krw_change": "원/달러 환율 기간 변화율",
+    "treasury_3y_latest": "국고채 3년 금리(최근)",
+    "treasury_3y_change_bp": "국고채 3년 금리 기간 변화폭",
+    "corr_return_usd_krw": "주가 수익률-환율 상관계수",
+    "corr_return_treasury_3y": "주가 수익률-금리 상관계수",
+    "macro_filled_days": "환율, 금리 보간 거래일",
+    "price_outlier_days": "종가 하루 변화 이상치",
+    "usd_krw_outlier_days": "환율 하루 변화 이상치",
+    "treasury_3y_outlier_days": "금리 하루 변화 이상치",
 }
 
 app = Flask(
@@ -251,6 +261,14 @@ def build_kpi_cards(payload: dict) -> list[dict]:
                     }
                     for name, metric in company["market_kpi"].items()
                 ],
+                "macro": [
+                    {
+                        "label": KPI_LABELS.get(name, name),
+                        "value": format_kpi_metric(metric),
+                        "reason": metric.get("reason"),
+                    }
+                    for name, metric in company.get("macro_kpi", {}).items()
+                ],
             }
         )
     return cards
@@ -262,6 +280,7 @@ def _kpi_lookup(payload: dict) -> dict[str, dict[str, dict]]:
         metrics = {}
         metrics.update(company.get("financial_kpi", {}))
         metrics.update(company.get("market_kpi", {}))
+        metrics.update(company.get("macro_kpi", {}))
         for history in company.get("financial_history", []):
             period = history.get("period")
             for key, metric in history.get("financial_kpi", {}).items():
@@ -506,6 +525,16 @@ def analyze():
         if (run_dir / "investor_summary.csv").is_file()
         else None
     )
+    market_macro_csv_url = (
+        url_for("run_file", run_id=run_id, filename="market_macro.csv")
+        if (run_dir / "market_macro.csv").is_file()
+        else None
+    )
+    data_quality_csv_url = (
+        url_for("run_file", run_id=run_id, filename="data_quality_log.csv")
+        if (run_dir / "data_quality_log.csv").is_file()
+        else None
+    )
     gpt_insight_cards, gpt_comparison_cards = build_gpt_cards(
         integrated.gpt_insights,
         integrated.gpt_comparisons,
@@ -540,6 +569,8 @@ def analyze():
         stock_prices_csv_url=stock_prices_csv_url,
         stock_summary_csv_url=stock_summary_csv_url,
         investor_summary_csv_url=investor_summary_csv_url,
+        market_macro_csv_url=market_macro_csv_url,
+        data_quality_csv_url=data_quality_csv_url,
     )
 
 
