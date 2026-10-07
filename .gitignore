@@ -15,6 +15,10 @@ htmlcov/
 output/
 doc/
 docs/
+!docs/
+docs/*
+!docs/analysis-methodology.md
+!docs/technical-guide.md
 *.log
 .idea/
 .vscode/
