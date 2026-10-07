@@ -5,13 +5,27 @@ import unittest
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 
-from src.macro_analysis import FX_COLUMN, merge_macro_with_prices, prepare_macro_series
+from src.macro_analysis import (
+    CORPORATE_BOND_COLUMN,
+    FX_COLUMN,
+    MARKET_INDEX_COLUMN,
+    RATE_COLUMN,
+    merge_macro_with_prices,
+    prepare_macro_series,
+)
 from src.stock_visualization import (
+    _build_rolling_correlation_figure,
+    _build_fx_rate_scatter_figure,
+    _build_market_correlation_heatmap_figure,
     _create_monthly_volume_chart,
     _outlier_status_text,
+    create_rolling_correlation_visualizations,
     create_daily_change_visualizations,
+    create_fx_rate_scatter_visualizations,
+    create_market_correlation_heatmaps,
     monthly_volume_summary,
 )
 from src.visualization import _line_chart, create_single_company_charts
@@ -74,6 +88,21 @@ class SingleCompanyVisualizationTests(unittest.TestCase):
             self.assertGreater(len(figures[2].axes[0].containers), 0)
             self.assertTrue((Path(directory) / "operating_margin.png").exists())
             self.assertTrue((Path(directory) / "debt_ratio.png").exists())
+
+    def test_single_year_omits_uninformative_single_metric_bars(self) -> None:
+        data = self.general_company_frame([2025])
+        with tempfile.TemporaryDirectory() as directory:
+            charts_dir = Path(directory)
+
+            create_single_company_charts(data, charts_dir)
+
+            self.assertFalse((charts_dir / "debt_ratio.png").exists())
+            self.assertFalse((charts_dir / "interest_coverage.png").exists())
+            self.assertFalse((charts_dir / "receivables_days.png").exists())
+            self.assertFalse((charts_dir / "financial_stability_snapshot.png").exists())
+            self.assertTrue((charts_dir / "revenue_operating_profit.png").exists())
+            self.assertTrue((charts_dir / "operating_margin.png").exists())
+            self.assertTrue((charts_dir / "roe_revenue_growth.png").exists())
 
 
 class MonthlyVolumeTests(unittest.TestCase):
@@ -140,6 +169,250 @@ class DailyChangeVisualizationTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as directory:
                 create_daily_change_visualizations(merged, Path(directory))
                 self.assertTrue((Path(directory) / "daily_change_000001.png").exists())
+
+
+class FXRateScatterVisualizationTests(unittest.TestCase):
+    def tearDown(self) -> None:
+        plt.close("all")
+
+    @staticmethod
+    def macro_frame() -> pd.DataFrame:
+        dates = pd.date_range("2026-01-01", periods=15, freq="B")
+        prices = pd.DataFrame(
+            {
+                "기업명": "테스트전자",
+                "종목코드": "000001",
+                "기준일": dates,
+                "종가": [100.0 + index for index in range(len(dates))],
+                "시장구분": "KOSPI",
+            }
+        )
+        fx = prepare_macro_series(
+            [(day.date(), 1300.0 + index * index) for index, day in enumerate(dates)],
+            FX_COLUMN,
+        )
+        rate = prepare_macro_series(
+            [
+                (day.date(), 3.0 + index * 0.01 + (index % 3) * 0.002)
+                for index, day in enumerate(dates)
+            ],
+            RATE_COLUMN,
+        )
+        corporate = prepare_macro_series(
+            [
+                (day.date(), 4.1 + index * 0.014 + (index % 4) * 0.003)
+                for index, day in enumerate(dates)
+            ],
+            CORPORATE_BOND_COLUMN,
+        )
+        market_index = prepare_macro_series(
+            [
+                (day.date(), 2500.0 + index * 2 + (index % 5) * 1.3)
+                for index, day in enumerate(dates)
+            ],
+            MARKET_INDEX_COLUMN,
+        )
+        return merge_macro_with_prices(
+            prices,
+            fx,
+            rate,
+            corporate,
+            market_indices={"KOSPI": market_index},
+        )
+
+    def test_scatter_has_korean_labels_dashed_trend_and_slope(self):
+        built = _build_fx_rate_scatter_figure(self.macro_frame(), "테스트전자")
+
+        self.assertIsNotNone(built)
+        figure, slope = built
+        axis = figure.axes[0]
+        self.assertEqual(axis.get_xlabel(), "환율 변화율(%)")
+        self.assertEqual(axis.get_ylabel(), "금리 변화폭(bp)")
+        self.assertIn("환율 변화율과 금리 변화폭 산점도", axis.get_title())
+        self.assertTrue(any(line.get_linestyle() == "--" for line in axis.lines))
+        self.assertTrue(any("추세선 기울기" in text.get_text() for text in axis.texts))
+        self.assertIsInstance(slope, float)
+
+    def test_scatter_png_is_created(self):
+        with tempfile.TemporaryDirectory() as directory:
+            create_fx_rate_scatter_visualizations(self.macro_frame(), Path(directory))
+
+            self.assertTrue((Path(directory) / "fx_rate_scatter_000001.png").exists())
+
+
+class MarketCorrelationHeatmapTests(unittest.TestCase):
+    def tearDown(self) -> None:
+        plt.close("all")
+
+    def test_heatmap_uses_four_daily_change_series_and_pearson_corr(self):
+        data = FXRateScatterVisualizationTests.macro_frame()
+
+        built = _build_market_correlation_heatmap_figure(data, "테스트전자")
+
+        self.assertIsNotNone(built)
+        figure, correlation, observations = built
+        axis = figure.axes[0]
+        self.assertEqual(correlation.shape, (5, 5))
+        self.assertTrue(correlation.equals(correlation.T))
+        self.assertGreaterEqual(observations, 10)
+        self.assertIn(
+            "주가 수익률·시장지수 수익률·환율 변화율·금리 변화폭·신용 스프레드 변화폭 상관관계 히트맵",
+            axis.get_title(),
+        )
+        self.assertEqual(axis.images[0].get_clim(), (-1.0, 1.0))
+        self.assertTrue(axis.images[0].get_array().mask.diagonal().all())
+        self.assertEqual(len(axis.texts), 20)
+
+    def test_heatmap_png_is_created(self):
+        data = FXRateScatterVisualizationTests.macro_frame()
+        with tempfile.TemporaryDirectory() as directory:
+            create_market_correlation_heatmaps(data, Path(directory))
+
+            self.assertTrue(
+                (Path(directory) / "market_correlation_heatmap_000001.png").exists()
+            )
+
+
+class RollingCorrelationVisualizationTests(unittest.TestCase):
+    def tearDown(self) -> None:
+        plt.close("all")
+
+    @staticmethod
+    def three_month_macro_frame() -> pd.DataFrame:
+        dates = pd.date_range("2026-07-01", periods=65, freq="B")
+        positions = np.arange(len(dates), dtype=float)
+        stock_returns = 0.2 + 0.6 * np.sin(positions / 4)
+        fx_changes = 0.08 * np.sin(positions / 5) + 0.04 * np.cos(positions / 3)
+        rate_changes = 0.008 * np.cos(positions / 6) + 0.003 * np.sin(positions / 2)
+        closes = 100 * np.cumprod(1 + stock_returns / 100)
+        fx_values = 1350 * np.cumprod(1 + fx_changes / 100)
+        rate_values = 3.0 + np.cumsum(rate_changes)
+        corporate_values = rate_values + 1.1 + np.cumsum(
+            0.004 * np.sin(positions / 3)
+        )
+        prices = pd.DataFrame(
+            {
+                "기업명": "테스트전자",
+                "종목코드": "000001",
+                "기준일": dates,
+                "종가": closes,
+                "시장구분": "KOSDAQ",
+            }
+        )
+        fx = prepare_macro_series(
+            [(day.date(), value) for day, value in zip(dates, fx_values)],
+            FX_COLUMN,
+        )
+        rate = prepare_macro_series(
+            [(day.date(), value) for day, value in zip(dates, rate_values)],
+            RATE_COLUMN,
+        )
+        corporate = prepare_macro_series(
+            [(day.date(), value) for day, value in zip(dates, corporate_values)],
+            CORPORATE_BOND_COLUMN,
+        )
+        market_values = 900 * np.cumprod(
+            1 + (0.12 * np.cos(positions / 5)) / 100
+        )
+        market_index = prepare_macro_series(
+            [(day.date(), value) for day, value in zip(dates, market_values)],
+            MARKET_INDEX_COLUMN,
+        )
+        return merge_macro_with_prices(
+            prices,
+            fx,
+            rate,
+            corporate,
+            market_indices={"KOSDAQ": market_index},
+        )
+
+    def test_four_company_factor_panels_for_all_periods(self):
+        expected = {
+            "1m": ("1개월", 10, 10),
+            "3m": ("3개월", 20, 20),
+            "6m": ("6개월", 60, 60),
+            "1y": ("1년", 60, 60),
+            "3y": ("3년", 60, 60),
+        }
+        for period, (label, window, minimum) in expected.items():
+            with self.subTest(period=period):
+                built = _build_rolling_correlation_figure(
+                    self.three_month_macro_frame(), "테스트전자", period
+                )
+
+                self.assertIsNotNone(built)
+                figure, rolling = built
+                title = figure._suptitle.get_text()
+                self.assertEqual(len(figure.axes), 4)
+                self.assertNotIn("환율 변화율-금리 변화폭", rolling.columns)
+                self.assertIn(f"{label} 조회 · {window}거래일 이동상관", title)
+                self.assertIn(f"유효 관측 {minimum}일 이상", title)
+                self.assertTrue(
+                    all(axis.get_ylim() == (-1.05, 1.05) for axis in figure.axes)
+                )
+                self.assertTrue(
+                    all(
+                        rolling[column].notna().any()
+                        for column in rolling.columns[1:]
+                    )
+                )
+                for axis in figure.axes:
+                    horizontal_levels = {
+                        float(line.get_ydata()[0])
+                        for line in axis.lines[1:]
+                        if len(line.get_ydata()) >= 2
+                        and np.allclose(line.get_ydata(), line.get_ydata()[0])
+                    }
+                    self.assertTrue(
+                        {-0.7, -0.3, 0.0, 0.3, 0.7}.issubset(
+                            horizontal_levels
+                        )
+                    )
+                plt.close(figure)
+
+    def test_optional_market_and_spread_panels_can_be_omitted(self):
+        data = self.three_month_macro_frame().drop(
+            columns=[
+                MARKET_INDEX_COLUMN,
+                "시장지수수익률(%)",
+                "시장지수보간",
+                "시장지수이상치",
+                "회사채3년AA-",
+                "회사채금리보간",
+                "신용스프레드(bp)",
+                "신용스프레드보간",
+                "신용스프레드변화폭(bp)",
+                "신용스프레드이상치",
+            ]
+        )
+
+        built = _build_rolling_correlation_figure(data, "테스트전자", "3m")
+
+        self.assertIsNotNone(built)
+        figure, rolling = built
+        self.assertEqual(len(figure.axes), 2)
+        self.assertEqual(
+            list(rolling.columns),
+            ["기준일", "주가 수익률-환율 변화율", "주가 수익률-금리 변화폭"],
+        )
+        plt.close(figure)
+
+    def test_rolling_correlation_png_is_created_for_all_periods(self):
+        for period in ("1m", "3m", "6m", "1y", "3y"):
+            with (
+                self.subTest(period=period),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                create_rolling_correlation_visualizations(
+                    self.three_month_macro_frame(), Path(directory), period
+                )
+
+                self.assertTrue(
+                    (
+                        Path(directory)
+                        / f"rolling_correlation_{period}_000001.png"
+                    ).exists()
+                )
 
 
 if __name__ == "__main__":

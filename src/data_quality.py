@@ -19,7 +19,9 @@ import pandas as pd
 IQR_MULTIPLIER = 1.5
 SCALE_FACTORS = (10, 100, 1000)
 SCALE_TOLERANCE = 0.05
-MIN_OUTLIER_OBSERVATIONS = 20
+# 1개월 조회에서도 주말·휴일과 첫 변화량 행을 제외한 이상치를 확인할 수 있도록
+# 최소 유효 변화량을 10개로 둔다. 짧은 표본의 IQR 경계는 장기 결과보다 민감하다.
+MIN_OUTLIER_OBSERVATIONS = 10
 
 LOG_COLUMNS = ["대상", "기업명", "기준일", "처리", "원래값", "처리값", "사유"]
 ACTION_FFILL = "ffill"

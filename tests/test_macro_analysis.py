@@ -9,10 +9,17 @@ import pandas as pd
 from src.data_quality import QualityLog
 from src.kpi_analysis import _macro_kpis
 from src.macro_analysis import (
+    CORPORATE_BOND_COLUMN,
+    CREDIT_SPREAD_CHANGE_BP_COLUMN,
+    CREDIT_SPREAD_COLUMN,
+    CREDIT_SPREAD_FILLED_COLUMN,
     FX_CHANGE_COLUMN,
     FX_COLUMN,
     FX_FILLED_COLUMN,
     FX_OUTLIER_COLUMN,
+    MARKET_INDEX_COLUMN,
+    MARKET_INDEX_NAME_COLUMN,
+    MARKET_INDEX_RETURN_COLUMN,
     PRICE_CHANGE_COLUMN,
     PRICE_OUTLIER_COLUMN,
     RATE_CHANGE_BP_COLUMN,
@@ -124,6 +131,45 @@ class MergeMacroTests(unittest.TestCase):
             merged.groupby("기업명").size().to_dict(), {"둘째": 1, "테스트전자": 2}
         )
 
+    def test_each_company_is_mapped_to_its_own_market_index(self):
+        dates = ["2026-03-02", "2026-03-03", "2026-03-04"]
+        kospi_company = price_frame(dates, [100.0, 101.0, 102.0]).assign(
+            시장구분="KOSPI"
+        )
+        kosdaq_company = price_frame(dates, [50.0, 51.0, 50.5]).assign(
+            기업명="코스닥기업", 종목코드="000002", 시장구분="KOSDAQ"
+        )
+        kospi = prepare_macro_series(
+            [
+                (date(2026, 3, 2), 2500.0),
+                (date(2026, 3, 3), 2525.0),
+                (date(2026, 3, 4), 2550.0),
+            ],
+            MARKET_INDEX_COLUMN,
+        )
+        kosdaq = prepare_macro_series(
+            [
+                (date(2026, 3, 2), 800.0),
+                (date(2026, 3, 3), 792.0),
+                (date(2026, 3, 4), 808.0),
+            ],
+            MARKET_INDEX_COLUMN,
+        )
+
+        merged = merge_macro_with_prices(
+            pd.concat([kospi_company, kosdaq_company], ignore_index=True),
+            market_indices={"KOSPI": kospi, "KOSDAQ": kosdaq},
+        )
+
+        first = merged[merged["기업명"] == "테스트전자"]
+        second = merged[merged["기업명"] == "코스닥기업"]
+        self.assertEqual(first[MARKET_INDEX_NAME_COLUMN].unique().tolist(), ["KOSPI"])
+        self.assertEqual(second[MARKET_INDEX_NAME_COLUMN].unique().tolist(), ["KOSDAQ"])
+        self.assertEqual(first[MARKET_INDEX_COLUMN].tolist(), [2500.0, 2525.0, 2550.0])
+        self.assertEqual(second[MARKET_INDEX_COLUMN].tolist(), [800.0, 792.0, 808.0])
+        self.assertEqual(first[MARKET_INDEX_RETURN_COLUMN].iloc[1], 1.0)
+        self.assertEqual(second[MARKET_INDEX_RETURN_COLUMN].iloc[1], -1.0)
+
 
 class DailyChangeColumnTests(unittest.TestCase):
     def test_close_fx_rate_changes_use_movement_not_level(self):
@@ -160,6 +206,38 @@ class DailyChangeColumnTests(unittest.TestCase):
         second_rows = merged[merged["기업명"] == "둘째"]
         self.assertTrue(pd.isna(second_rows[PRICE_CHANGE_COLUMN].iloc[0]))
         self.assertEqual(second_rows[PRICE_CHANGE_COLUMN].iloc[1], 2.0)
+
+    def test_credit_spread_is_corporate_minus_treasury_and_changes_in_bp(self):
+        dates = ["2026-03-02", "2026-03-03", "2026-03-04"]
+        prices = price_frame(dates)
+        rate = prepare_macro_series(
+            [
+                (date(2026, 3, 2), 3.00),
+                (date(2026, 3, 3), 3.05),
+                (date(2026, 3, 4), 3.02),
+            ],
+            RATE_COLUMN,
+        )
+        corporate = prepare_macro_series(
+            [
+                (date(2026, 3, 2), 4.20),
+                (date(2026, 3, 3), 4.30),
+                (date(2026, 3, 4), 4.22),
+            ],
+            CORPORATE_BOND_COLUMN,
+        )
+
+        merged = merge_macro_with_prices(
+            prices, rate=rate, corporate_bond=corporate
+        )
+
+        self.assertEqual(merged[CREDIT_SPREAD_COLUMN].tolist(), [120.0, 125.0, 120.0])
+        self.assertTrue(pd.isna(merged[CREDIT_SPREAD_CHANGE_BP_COLUMN].iloc[0]))
+        self.assertEqual(
+            merged[CREDIT_SPREAD_CHANGE_BP_COLUMN].iloc[1:].tolist(),
+            [5.0, -5.0],
+        )
+        self.assertEqual(merged[CREDIT_SPREAD_FILLED_COLUMN].tolist(), [False] * 3)
 
 
 class MissingAndOutlierTests(unittest.TestCase):
@@ -248,8 +326,104 @@ class MacroKPITests(unittest.TestCase):
         self.assertEqual(kpis["treasury_3y_change_bp"]["value"], 0.0)
         self.assertEqual(kpis["macro_filled_days"]["value"], 0)
         self.assertEqual(kpis["corr_return_usd_krw"]["status"], "available")
+        self.assertEqual(kpis["corr_return_usd_krw"]["observations"], 29)
+        self.assertEqual(kpis["corr_return_treasury_3y"]["observations"], 29)
         # 금리가 변하지 않아 분산이 0이면 상관계수를 만들지 않는다.
         self.assertEqual(kpis["corr_return_treasury_3y"]["status"], "missing")
+        self.assertEqual(
+            kpis["corr_usd_krw_treasury_3y_level"]["status"], "missing"
+        )
+        self.assertEqual(
+            kpis["corr_usd_krw_treasury_3y_change"]["status"], "missing"
+        )
+
+    def test_credit_spread_kpis_and_stock_return_correlation(self):
+        dates = pd.date_range("2026-01-01", periods=30, freq="B")
+        rng = np.random.default_rng(21)
+        spread_changes = rng.normal(0, 0.12, len(dates) - 1)
+        spread_values = [110.0]
+        for change in spread_changes:
+            spread_values.append(spread_values[-1] + change)
+        returns = np.r_[0.0, spread_changes]
+        closes = 100 * np.cumprod(1 + returns / 100)
+        prices = price_frame(
+            list(dates.strftime("%Y-%m-%d")), list(closes)
+        ).assign(시장구분="KOSPI")
+        rate = prepare_macro_series(
+            [(day.date(), 3.0) for day in dates], RATE_COLUMN
+        )
+        corporate = prepare_macro_series(
+            [
+                (day.date(), 3.0 + spread / 100)
+                for day, spread in zip(dates, spread_values)
+            ],
+            CORPORATE_BOND_COLUMN,
+        )
+        market_index = prepare_macro_series(
+            [
+                (day.date(), value)
+                for day, value in zip(
+                    dates, 2500 * np.cumprod(1 + returns / 100)
+                )
+            ],
+            MARKET_INDEX_COLUMN,
+        )
+
+        kpis = _macro_kpis(
+            merge_macro_with_prices(
+                prices,
+                rate=rate,
+                corporate_bond=corporate,
+                market_indices={"KOSPI": market_index},
+            )
+        )
+
+        self.assertEqual(kpis["market_index_name"]["value"], "KOSPI")
+        self.assertEqual(kpis["corr_return_market_index"]["status"], "available")
+        self.assertAlmostEqual(
+            kpis["corr_return_market_index"]["value"], 1.0, places=2
+        )
+        self.assertEqual(kpis["credit_spread_latest"]["status"], "available")
+        self.assertEqual(kpis["credit_spread_change_bp"]["status"], "available")
+        self.assertEqual(kpis["corr_return_credit_spread"]["status"], "available")
+        self.assertEqual(kpis["corr_return_credit_spread"]["observations"], 29)
+        self.assertAlmostEqual(
+            kpis["corr_return_credit_spread"]["value"], 1.0, places=2
+        )
+
+    def test_fx_rate_level_and_change_correlations(self):
+        dates = pd.date_range("2026-01-01", periods=35, freq="B")
+        rng = np.random.default_rng(7)
+        linked_changes = rng.normal(0, 0.2, len(dates) - 1)
+        fx_values = [1300.0]
+        rate_values = [3.0]
+        for change in linked_changes:
+            fx_values.append(fx_values[-1] * (1 + change / 100))
+            rate_values.append(rate_values[-1] + change / 100)
+        prices = price_frame(
+            list(dates.strftime("%Y-%m-%d")),
+            list(100 * np.cumprod(1 + rng.normal(0, 0.01, len(dates)))),
+        )
+        fx = prepare_macro_series(
+            [(day.date(), value) for day, value in zip(dates, fx_values)],
+            FX_COLUMN,
+        )
+        rate = prepare_macro_series(
+            [(day.date(), value) for day, value in zip(dates, rate_values)],
+            RATE_COLUMN,
+        )
+
+        kpis = _macro_kpis(merge_macro_with_prices(prices, fx, rate))
+
+        self.assertEqual(
+            kpis["corr_usd_krw_treasury_3y_level"]["status"], "available"
+        )
+        self.assertEqual(
+            kpis["corr_usd_krw_treasury_3y_change"]["status"], "available"
+        )
+        self.assertAlmostEqual(
+            kpis["corr_usd_krw_treasury_3y_change"]["value"], 1.0, places=2
+        )
 
     def test_short_period_has_no_correlation(self):
         prices = price_frame(["2026-03-02", "2026-03-03", "2026-03-04"])
@@ -262,6 +436,40 @@ class MacroKPITests(unittest.TestCase):
 
         self.assertEqual(kpis["corr_return_usd_krw"]["status"], "no_comparison_period")
         self.assertEqual(kpis["treasury_3y_latest"]["status"], "missing")
+        self.assertEqual(
+            kpis["corr_usd_krw_treasury_3y_level"]["status"], "missing"
+        )
+
+    def test_one_month_sized_sample_has_correlations(self):
+        dates = pd.date_range("2026-09-14", periods=15, freq="B")
+        rng = np.random.default_rng(11)
+        stock_changes = rng.normal(0, 0.01, len(dates))
+        macro_changes = rng.normal(0, 0.15, len(dates) - 1)
+        closes = list(100 * np.cumprod(1 + stock_changes))
+        fx_values = [1400.0]
+        rate_values = [2.8]
+        for index, change in enumerate(macro_changes):
+            fx_values.append(fx_values[-1] * (1 + change / 100))
+            rate_values.append(rate_values[-1] + (change + (index % 3 - 1) * 0.02) / 100)
+        prices = price_frame(list(dates.strftime("%Y-%m-%d")), closes)
+        fx = prepare_macro_series(
+            [(day.date(), value) for day, value in zip(dates, fx_values)],
+            FX_COLUMN,
+        )
+        rate = prepare_macro_series(
+            [(day.date(), value) for day, value in zip(dates, rate_values)],
+            RATE_COLUMN,
+        )
+
+        kpis = _macro_kpis(merge_macro_with_prices(prices, fx, rate))
+
+        for name in (
+            "corr_return_usd_krw",
+            "corr_return_treasury_3y",
+            "corr_usd_krw_treasury_3y_level",
+            "corr_usd_krw_treasury_3y_change",
+        ):
+            self.assertEqual(kpis[name]["status"], "available")
 
 
 if __name__ == "__main__":

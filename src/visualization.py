@@ -11,6 +11,7 @@ import matplotlib
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
+import koreanize_matplotlib  # noqa: F401  # import만으로 Matplotlib 한글 폰트를 적용한다.
 from matplotlib import font_manager
 import numpy as np
 import pandas as pd
@@ -177,6 +178,7 @@ def create_single_company_charts(data: pd.DataFrame, charts_dir: Path) -> list:
     company = data["기업명"].iloc[0]
     analysis_type = data["분석유형"].iloc[0]
     data = data.sort_values("연도")
+    single_financial_year = data["연도"].nunique() == 1
     figures = []
 
     if analysis_type == "일반기업":
@@ -241,6 +243,12 @@ def create_single_company_charts(data: pd.DataFrame, charts_dir: Path) -> list:
         ]
 
     for chart_kind, columns, title, ylabel, scale, filename in chart_specs:
+        if single_financial_year and filename in {
+            "debt_ratio.png",
+            "interest_coverage.png",
+            "receivables_days.png",
+        }:
+            continue
         chart_factory = _line_chart if chart_kind == "line" else _bar_chart
         fig = chart_factory(data, columns, title, ylabel, scale=scale)
         _save_figure(fig, charts_dir / filename)

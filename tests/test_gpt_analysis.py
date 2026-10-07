@@ -90,11 +90,14 @@ class GPTAnalysisTests(unittest.TestCase):
             result = analyze_kpis(self.payload(), Path("."))
 
         self.assertEqual(result["analyses"][0]["company"], "테스트전자")
+        self.assertNotIn("macro_outlook", result["analyses"][0])
         self.assertEqual(result["comparisons"], [])
         kwargs = client.responses.parse.call_args.kwargs
         self.assertFalse(kwargs["store"])
         self.assertIs(kwargs["text_format"], KPIInsightResponse)
         self.assertIn("15년 이상의 실무 경험", kwargs["instructions"])
+        self.assertIn("원/달러 환율 상승은 원화 약세", kwargs["instructions"])
+        self.assertNotIn("macro_outlook", kwargs["instructions"])
         self.assertIsInstance(kwargs["input"], str)
 
     @patch("src.gpt_analysis.get_openai_api_key", return_value="test-key")
@@ -156,6 +159,21 @@ class GPTAnalysisTests(unittest.TestCase):
             result = analyze_kpis(self.payload(), Path("."))
 
         self.assertNotIn("매수", result["analyses"][0]["profitability"]["summary"])
+
+    @patch("src.gpt_analysis.get_openai_api_key", return_value="test-key")
+    def test_repairs_acquisition_recommendation_language_after_retries(self, _api_key):
+        client = Mock()
+        parsed = self.parsed()
+        parsed.analyses[0].overall_summary = InsightSection(
+            summary="이 기업을 인수해야 합니다.", evidence_keys=["roe"]
+        )
+        client.responses.parse.return_value = SimpleNamespace(
+            output_parsed=parsed, output=[]
+        )
+        with patch("openai.OpenAI", return_value=client):
+            result = analyze_kpis(self.payload(), Path("."))
+
+        self.assertNotIn("인수해야", result["analyses"][0]["overall_summary"]["summary"])
 
     @patch("src.gpt_analysis.get_openai_api_key", return_value="test-key")
     def test_normalizes_prefixed_market_key_and_negative_magnitude(self, _api_key):

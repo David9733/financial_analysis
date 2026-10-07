@@ -19,7 +19,7 @@
         {% if stock_summary_csv_url %}<a class="button secondary" href="{{ stock_summary_csv_url }}" download>주가 요약 CSV</a>{% endif %}
         {% if investor_summary_csv_url %}<a class="button secondary" href="{{ investor_summary_csv_url }}" download>투자자 수급 CSV</a>{% endif %}
         {% if stock_prices_csv_url %}<a class="button secondary" href="{{ stock_prices_csv_url }}" download>일별 시세 CSV</a>{% endif %}
-        {% if market_macro_csv_url %}<a class="button secondary" href="{{ market_macro_csv_url }}" download>주가, 환율, 금리 CSV</a>{% endif %}
+        {% if market_macro_csv_url %}<a class="button secondary" href="{{ market_macro_csv_url }}" download>주가·시장지수·외부요인 CSV</a>{% endif %}
         {% if data_quality_csv_url %}<a class="button secondary" href="{{ data_quality_csv_url }}" download>데이터 처리 로그 CSV</a>{% endif %}
         <a class="button" href="{{ url_for('index') }}">새 분석</a>
       </div>
@@ -49,7 +49,13 @@
                   <h4>재무 KPI</h4>
                   <dl class="kpi-list">
                     {% for metric in card.financial %}
-                      <div title="{{ metric.reason or '' }}"><dt>{{ metric.label }}</dt><dd>{{ metric.value }}</dd></div>
+                      <div class="{% if metric.help_text %}kpi-help-item{% if metric.help_kind == 'warning' %} kpi-warning-item{% endif %}{% endif %}"
+                        {% if metric.reason %}title="{{ metric.reason }}"{% endif %}
+                        {% if metric.help_text %}tabindex="0" aria-label="{{ metric.label }} {{ metric.value }}. {{ metric.help_text }}"{% endif %}>
+                        <dt>{{ metric.label }}{% if metric.help_text %}<span class="kpi-help-badge" aria-hidden="true">{% if metric.help_kind == 'warning' %}!{% else %}?{% endif %}</span>{% endif %}</dt>
+                        <dd>{{ metric.value }}</dd>
+                        {% if metric.help_text %}<span class="kpi-help-tooltip" role="tooltip">{{ metric.help_text }}</span>{% endif %}
+                      </div>
                     {% endfor %}
                   </dl>
                 </div>
@@ -57,16 +63,28 @@
                   <h4>시장 KPI</h4>
                   <dl class="kpi-list">
                     {% for metric in card.market %}
-                      <div title="{{ metric.reason or '' }}"><dt>{{ metric.label }}</dt><dd>{{ metric.value }}</dd></div>
+                      <div class="{% if metric.help_text %}kpi-help-item{% if metric.help_kind == 'warning' %} kpi-warning-item{% endif %}{% endif %}"
+                        {% if metric.reason %}title="{{ metric.reason }}"{% endif %}
+                        {% if metric.help_text %}tabindex="0" aria-label="{{ metric.label }} {{ metric.value }}. {{ metric.help_text }}"{% endif %}>
+                        <dt>{{ metric.label }}{% if metric.help_text %}<span class="kpi-help-badge" aria-hidden="true">{% if metric.help_kind == 'warning' %}!{% else %}?{% endif %}</span>{% endif %}</dt>
+                        <dd>{{ metric.value }}</dd>
+                        {% if metric.help_text %}<span class="kpi-help-tooltip" role="tooltip">{{ metric.help_text }}</span>{% endif %}
+                      </div>
                     {% endfor %}
                   </dl>
                 </div>
                 {% if card.macro %}
                   <div class="kpi-group-wide">
-                    <h4>외부 요인 (환율, 금리)</h4>
+                    <h4>시장 및 외부 요인 (KOSPI/KOSDAQ, 환율, 금리, 신용 스프레드)</h4>
                     <dl class="kpi-list">
                       {% for metric in card.macro %}
-                        <div title="{{ metric.reason or '' }}"><dt>{{ metric.label }}</dt><dd>{{ metric.value }}</dd></div>
+                        <div class="{% if metric.help_text %}kpi-help-item{% if metric.help_kind == 'warning' %} kpi-warning-item{% endif %}{% endif %}"
+                          {% if metric.reason %}title="{{ metric.reason }}"{% endif %}
+                          {% if metric.help_text %}tabindex="0" aria-label="{{ metric.label }} {{ metric.value }}. {{ metric.help_text }}"{% endif %}>
+                          <dt>{{ metric.label }}{% if metric.help_text %}<span class="kpi-help-badge" aria-hidden="true">{% if metric.help_kind == 'warning' %}!{% else %}?{% endif %}</span>{% endif %}</dt>
+                          <dd>{{ metric.value }}</dd>
+                          {% if metric.help_text %}<span class="kpi-help-tooltip" role="tooltip">{{ metric.help_text }}</span>{% endif %}
+                        </div>
                       {% endfor %}
                     </dl>
                   </div>
@@ -167,13 +185,19 @@
         </div>
 
         <div class="chart-grid">
-          {% for chart_url in stock_chart_urls %}
+          {% for chart in stock_chart_items %}
             <article class="chart-card">
-              <img src="{{ chart_url }}" alt="주식시장 차트 {{ loop.index }}" loading="lazy">
+              <img src="{{ chart.url }}" alt="주식시장 차트 {{ loop.index }}" loading="lazy">
+              {% if chart.insight %}
+                <div class="chart-insight">
+                  <h3>종합 인사이트</h3>
+                  <p>{{ chart.insight }}</p>
+                </div>
+              {% endif %}
             </article>
           {% endfor %}
         </div>
-        <p class="chart-note">투자자 비율은 공개 동향에서 제공하는 최근 최대 10거래일의 매수 거래량 기준입니다. 거래량 막대의 빨강/파랑은 실제 매수·매도 물량 분리가 아니라 시가 대비 종가를 이용한 매수·매도 우세 표시입니다.</p>
+        <p class="chart-note">히트맵 종합 인사이트는 주가와 시장지수·환율·금리·신용 스프레드의 선택기간 과거 동행성을 설명합니다. |r| 0.3 미만은 약함으로 제외하고, 0.3 이상 0.7 미만은 중간, 0.7 이상은 강한 신호로 표시합니다. 이는 인과관계, 재무 완충력 또는 미래 주가를 의미하지 않습니다. 투자자 비율은 공개 동향에서 제공하는 최근 최대 10거래일의 매수 거래량 기준입니다. 거래량 막대의 빨강/파랑은 실제 매수·매도 물량 분리가 아니라 시가 대비 종가를 이용한 매수·매도 우세 표시입니다.</p>
 
         <section class="panel table-panel compact-panel">
           <div class="section-heading"><h3>주가 요약</h3><span>재무정보와 다른 일별 거래 데이터입니다.</span></div>

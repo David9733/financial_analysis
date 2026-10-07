@@ -1,4 +1,4 @@
-"""환율·금리 시계열 정제와 주식 거래일 기준 병합.
+"""시장지수·환율·금리·신용 스프레드 시계열과 주식 거래일 병합.
 
 기준 달력은 주식 거래일이다. 주가 표에 매크로 값을 왼쪽 기준으로 붙이고,
 주가는 있는데 매크로가 빈 날만 직전 관측값으로 채운다(ffill). 직전 값이 없는
@@ -39,27 +39,57 @@ else:
 
 
 FX_COLUMN = "원달러환율"
+MARKET_INDEX_NAME_COLUMN = "비교시장지수"
+MARKET_INDEX_COLUMN = "시장지수종가"
 RATE_COLUMN = "국고채3년"
+CORPORATE_BOND_COLUMN = "회사채3년AA-"
+CREDIT_SPREAD_COLUMN = "신용스프레드(bp)"
 FX_FILLED_COLUMN = "환율보간"
+MARKET_INDEX_FILLED_COLUMN = "시장지수보간"
 RATE_FILLED_COLUMN = "금리보간"
+CORPORATE_BOND_FILLED_COLUMN = "회사채금리보간"
+CREDIT_SPREAD_FILLED_COLUMN = "신용스프레드보간"
 PRICE_OUTLIER_COLUMN = "종가이상치"
 FX_OUTLIER_COLUMN = "환율이상치"
+MARKET_INDEX_OUTLIER_COLUMN = "시장지수이상치"
 RATE_OUTLIER_COLUMN = "금리이상치"
+CREDIT_SPREAD_OUTLIER_COLUMN = "신용스프레드이상치"
 # 분석에는 값(수준) 대신 하루에 얼마나 움직였는지를 쓴다.
 # 종가·환율은 변화율(오늘 ÷ 어제 − 1), 금리는 이미 %이므로 변화폭(오늘 − 어제).
 PRICE_CHANGE_COLUMN = "종가등락률(%)"
+MARKET_INDEX_RETURN_COLUMN = "시장지수수익률(%)"
 FX_CHANGE_COLUMN = "환율변화율(%)"
 RATE_CHANGE_PP_COLUMN = "금리변화폭(%p)"
 RATE_CHANGE_BP_COLUMN = "금리변화폭(bp)"  # 1bp = 0.01%p
+CREDIT_SPREAD_CHANGE_BP_COLUMN = "신용스프레드변화폭(bp)"
 MACRO_SERIES = (
     (FX_COLUMN, FX_FILLED_COLUMN),
     (RATE_COLUMN, RATE_FILLED_COLUMN),
+    (CORPORATE_BOND_COLUMN, CORPORATE_BOND_FILLED_COLUMN),
 )
 # (값 열, 하루 변화 열, 변화 방식, 보간 열, 이상치 열, 로그 대상명, 변화 단위)
 CHANGE_SERIES = (
     ("종가", PRICE_CHANGE_COLUMN, "pct", None, PRICE_OUTLIER_COLUMN, "종가", "%"),
+    (
+        MARKET_INDEX_COLUMN,
+        MARKET_INDEX_RETURN_COLUMN,
+        "pct",
+        MARKET_INDEX_FILLED_COLUMN,
+        MARKET_INDEX_OUTLIER_COLUMN,
+        "시장지수",
+        "%",
+    ),
     (FX_COLUMN, FX_CHANGE_COLUMN, "pct", FX_FILLED_COLUMN, FX_OUTLIER_COLUMN, "원달러환율", "%"),
     (RATE_COLUMN, RATE_CHANGE_PP_COLUMN, "diff", RATE_FILLED_COLUMN, RATE_OUTLIER_COLUMN, "국고채3년", "%p"),
+    (
+        CREDIT_SPREAD_COLUMN,
+        CREDIT_SPREAD_CHANGE_BP_COLUMN,
+        "diff",
+        CREDIT_SPREAD_FILLED_COLUMN,
+        CREDIT_SPREAD_OUTLIER_COLUMN,
+        "신용스프레드",
+        "bp",
+    ),
 )
 CHANGE_DIGITS = 4
 BP_DIGITS = 2
@@ -71,10 +101,16 @@ MAX_FILL_DAYS = 10
 MARKET_MACRO_COLUMNS = [
     "기업명",
     "종목코드",
+    "시장구분",
     "기준일",
     "종가",
     PRICE_CHANGE_COLUMN,
     PRICE_OUTLIER_COLUMN,
+    MARKET_INDEX_NAME_COLUMN,
+    MARKET_INDEX_COLUMN,
+    MARKET_INDEX_RETURN_COLUMN,
+    MARKET_INDEX_FILLED_COLUMN,
+    MARKET_INDEX_OUTLIER_COLUMN,
     FX_COLUMN,
     FX_CHANGE_COLUMN,
     FX_FILLED_COLUMN,
@@ -84,6 +120,12 @@ MARKET_MACRO_COLUMNS = [
     RATE_CHANGE_BP_COLUMN,
     RATE_FILLED_COLUMN,
     RATE_OUTLIER_COLUMN,
+    CORPORATE_BOND_COLUMN,
+    CORPORATE_BOND_FILLED_COLUMN,
+    CREDIT_SPREAD_COLUMN,
+    CREDIT_SPREAD_CHANGE_BP_COLUMN,
+    CREDIT_SPREAD_FILLED_COLUMN,
+    CREDIT_SPREAD_OUTLIER_COLUMN,
 ]
 
 
@@ -97,6 +139,18 @@ def prepare_macro_series(rows: list[tuple[date, float]], column: str) -> pd.Data
     data = data.dropna(subset=["기준일", column])
     data = data.sort_values("기준일").drop_duplicates("기준일", keep="last")
     return data.reset_index(drop=True)
+
+
+def market_index_for_category(value) -> str | None:
+    """주식 API의 시장구분을 대표 시장지수 이름으로 표준화한다."""
+    if value is None or pd.isna(value):
+        return None
+    text = str(value).strip().upper()
+    if "KOSDAQ" in text or "코스닥" in text:
+        return "KOSDAQ"
+    if "KOSPI" in text or "코스피" in text:
+        return "KOSPI"
+    return None
 
 
 def _attach_series(
@@ -155,6 +209,17 @@ def _add_daily_changes(base: pd.DataFrame) -> None:
     base[RATE_CHANGE_BP_COLUMN] = (base[RATE_CHANGE_PP_COLUMN] * 100).round(BP_DIGITS)
 
 
+def _add_credit_spread(base: pd.DataFrame) -> None:
+    """회사채 AA-와 국고채 3년의 금리 차이를 bp 단위로 계산한다."""
+    base[CREDIT_SPREAD_COLUMN] = (
+        (base[CORPORATE_BOND_COLUMN] - base[RATE_COLUMN]) * 100
+    ).round(BP_DIGITS)
+    base[CREDIT_SPREAD_FILLED_COLUMN] = (
+        base[CORPORATE_BOND_FILLED_COLUMN].fillna(False).astype(bool)
+        | base[RATE_FILLED_COLUMN].fillna(False).astype(bool)
+    )
+
+
 def _flag_outliers(base: pd.DataFrame, log: QualityLog | None, company: str) -> None:
     """하루 변화가 IQR 범위를 벗어난 날을 표시만 하고 값은 그대로 둔다."""
     for column, change_column, _, filled_column, outlier_column, target, unit in CHANGE_SERIES:
@@ -187,15 +252,22 @@ def merge_macro_with_prices(
     prices: pd.DataFrame,
     fx: pd.DataFrame | None = None,
     rate: pd.DataFrame | None = None,
+    corporate_bond: pd.DataFrame | None = None,
+    market_indices: dict[str, pd.DataFrame] | None = None,
     log: QualityLog | None = None,
 ) -> pd.DataFrame:
-    """기업별 주가 거래일에 환율·금리를 left join + ffill로 맞추고 이상치를 표시한다."""
+    """기업별 시장지수와 공통 외부요인을 거래일에 맞추고 이상치를 표시한다."""
     if prices.empty:
         return pd.DataFrame(columns=MARKET_MACRO_COLUMNS)
 
     sources = {
         FX_COLUMN: fx if fx is not None else prepare_macro_series([], FX_COLUMN),
         RATE_COLUMN: rate if rate is not None else prepare_macro_series([], RATE_COLUMN),
+        CORPORATE_BOND_COLUMN: (
+            corporate_bond
+            if corporate_bond is not None
+            else prepare_macro_series([], CORPORATE_BOND_COLUMN)
+        ),
     }
     # 원천 시리즈 단계에서 소수점·단위 오류를 한 번만 보정한다.
     for column in list(sources):
@@ -204,15 +276,45 @@ def merge_macro_with_prices(
                 sources[column], column, log, target=column
             )
 
+    index_sources: dict[str, pd.DataFrame] = {}
+    for name, series in (market_indices or {}).items():
+        normalized_name = str(name).strip().upper()
+        if normalized_name not in {"KOSPI", "KOSDAQ"} or series.empty:
+            continue
+        corrected, _ = correct_scale_errors(
+            series, MARKET_INDEX_COLUMN, log, target=normalized_name
+        )
+        index_sources[normalized_name] = corrected
+
     frames = []
     for (company_name, stock_code), group in prices.groupby(["기업명", "종목코드"], sort=False):
-        base = (
-            group[["기업명", "종목코드", "기준일", "종가"]]
-            .sort_values("기준일")
-            .reset_index(drop=True)
+        selected_columns = ["기업명", "종목코드", "기준일", "종가"]
+        if "시장구분" in group:
+            selected_columns.insert(2, "시장구분")
+        base = group[selected_columns].sort_values("기준일").reset_index(drop=True)
+        if "시장구분" not in base:
+            base.insert(2, "시장구분", pd.NA)
+        categories = base["시장구분"].dropna()
+        market_name = (
+            market_index_for_category(categories.iloc[-1])
+            if not categories.empty
+            else None
+        )
+        base[MARKET_INDEX_NAME_COLUMN] = market_name or pd.NA
+        index_series = index_sources.get(market_name or "")
+        if index_series is None:
+            index_series = prepare_macro_series([], MARKET_INDEX_COLUMN)
+        _attach_series(
+            base,
+            index_series,
+            MARKET_INDEX_COLUMN,
+            MARKET_INDEX_FILLED_COLUMN,
+            log,
+            company_name,
         )
         for column, flag in MACRO_SERIES:
             _attach_series(base, sources[column], column, flag, log, company_name)
+        _add_credit_spread(base)
         _add_daily_changes(base)
         _flag_outliers(base, log, company_name)
 
@@ -226,5 +328,5 @@ def merge_macro_with_prices(
 
     merged = pd.concat(frames, ignore_index=True)
     if len(merged) != len(prices):
-        raise ValueError("환율과 금리 병합 후 전체 행 수가 주식 거래일 수와 다릅니다.")
+        raise ValueError("외부 요인 병합 후 전체 행 수가 주식 거래일 수와 다릅니다.")
     return merged[MARKET_MACRO_COLUMNS]

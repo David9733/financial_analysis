@@ -46,13 +46,17 @@ jiter==0.17.0
     # via openai
 kiwisolver==1.5.1
     # via matplotlib
+koreanize-matplotlib==0.1.1
+    # via -r requirements.txt
 markupsafe==3.0.3
     # via
     #   flask
     #   jinja2
     #   werkzeug
 matplotlib==3.10.9
-    # via -r requirements.txt
+    # via
+    #   -r requirements.txt
+    #   koreanize-matplotlib
 numpy==2.2.6
     # via
     #   contourpy

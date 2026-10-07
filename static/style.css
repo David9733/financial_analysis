@@ -100,6 +100,52 @@ code { padding: 8px 11px; border: 1px solid var(--line); border-radius: 999px; c
 .kpi-list div { display: flex; justify-content: space-between; gap: 12px; padding: 9px 0; border-bottom: 1px solid #edf2f7; }
 .kpi-list dt { color: var(--muted); font-size: 12px; }
 .kpi-list dd { margin: 0; font-size: 13px; font-weight: 800; text-align: right; }
+.kpi-list .kpi-help-item { position: relative; cursor: help; outline: none; }
+.kpi-help-item:focus-visible { border-radius: 6px; box-shadow: 0 0 0 2px rgba(65, 120, 190, .28); }
+.kpi-warning-item:focus-visible { box-shadow: 0 0 0 2px rgba(201, 138, 15, .32); }
+.kpi-help-badge {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  margin-left: 5px;
+  border-radius: 50%;
+  color: #275a91;
+  background: #e8f2ff;
+  font-size: 11px;
+  font-weight: 900;
+  vertical-align: middle;
+}
+.kpi-warning-item .kpi-help-badge { color: #805b10; background: #fff1c2; }
+.kpi-help-tooltip {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  right: 0;
+  width: min(320px, calc(100vw - 48px));
+  padding: 11px 13px;
+  border: 1px solid #b9d2ed;
+  border-radius: 10px;
+  color: #264e78;
+  background: #f5f9ff;
+  box-shadow: 0 8px 24px rgba(35, 71, 109, .16);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+  text-align: left;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-4px);
+  transition: opacity .15s ease, transform .15s ease, visibility .15s ease;
+  pointer-events: none;
+}
+.kpi-warning-item .kpi-help-tooltip { border-color: #e0b85f; color: #5f4308; background: #fff8e7; }
+.kpi-help-item:hover .kpi-help-tooltip,
+.kpi-help-item:focus .kpi-help-tooltip {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
 .insight-card > section { margin-top: 22px; }
 .insight-card section p { margin: 8px 0; line-height: 1.7; }
 .insight-evidence { color: var(--muted); font-size: 12px; }
@@ -117,6 +163,9 @@ code { padding: 8px 11px; border: 1px solid var(--line); border-radius: 999px; c
 .chart-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
 .chart-card { overflow: hidden; margin: 0; padding: 12px; border: 1px solid var(--line); border-radius: 20px; background: white; box-shadow: 0 14px 40px rgba(16,42,67,.08); }
 .chart-card img { display: block; width: 100%; height: auto; border-radius: 12px; }
+.chart-insight { padding: 14px 8px 6px; border-top: 1px solid var(--line); }
+.chart-insight h3 { margin: 0 0 7px; font-size: 15px; }
+.chart-insight p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
 .chart-note { margin: 12px 4px 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
 .table-panel { margin-top: 28px; padding: 28px; }
 .compact-panel { box-shadow: 0 14px 40px rgba(16,42,67,.08); }

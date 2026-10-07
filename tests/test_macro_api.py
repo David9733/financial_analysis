@@ -180,6 +180,28 @@ class InterestRateClientTests(unittest.TestCase):
                     date(2026, 10, 1), date(2026, 10, 5)
                 )
 
+    def test_corporate_aa_minus_uses_verified_ecos_item_code(self):
+        requested_item_codes = []
+
+        def opener(request, timeout=None):
+            requested_item_codes.append(urlparse(request.full_url).path.split("/")[-1])
+            return FakeResponse(
+                {
+                    "StatisticSearch": {
+                        "list_total_count": 1,
+                        "row": [{"TIME": "20261001", "DATA_VALUE": "4.12"}],
+                    }
+                }
+            )
+
+        with patch("src.macro_api.urlopen", opener):
+            series = InterestRateClient("key").get_corporate_aa_minus_3y(
+                date(2026, 10, 1), date(2026, 10, 1)
+            )
+
+        self.assertEqual(requested_item_codes, ["010300000"])
+        self.assertEqual(series.rows, [(date(2026, 10, 1), 4.12)])
+
 
 if __name__ == "__main__":
     unittest.main()

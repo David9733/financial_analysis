@@ -59,6 +59,15 @@ class OutlierTests(unittest.TestCase):
         self.assertEqual(changes[flags].abs().idxmax(), 30)
         pd.testing.assert_series_equal(values, original)
 
+    def test_one_month_sized_sample_flags_spike(self):
+        values = trend_series(15, seed=9)
+        values.iloc[10] = values.iloc[9] * 1.10
+        values.iloc[11:] = values.iloc[11:] + (values.iloc[10] - values.iloc[9])
+
+        flags = flag_change_outliers(daily_change(values, "pct"))
+
+        self.assertTrue(flags.iloc[10])
+
     def test_too_few_observations_flag_nothing(self):
         changes = daily_change(pd.Series([1.0, 1.0, 1.0, 5.0, 1.0]), "pct")
         self.assertFalse(flag_change_outliers(changes).any())
@@ -76,7 +85,7 @@ class OutlierTests(unittest.TestCase):
         naive = iqr_bounds(changes)
         cleaned = iqr_bounds(changes, pair_valid(filled))
 
-        self.assertIsNone(cleaned)  # 유효 관측이 20개 미만이면 판정하지 않는다
+        self.assertIsNone(cleaned)  # 유효 관측이 최소 기준보다 적으면 판정하지 않는다
         self.assertIsNotNone(naive)
 
     def test_pair_valid_excludes_filled_day_and_next_day(self):

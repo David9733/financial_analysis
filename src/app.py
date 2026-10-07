@@ -13,6 +13,7 @@ from uuid import uuid4
 from flask import Flask, abort, jsonify, render_template, request, send_from_directory, url_for
 
 if __package__:  # ``python -m src.app`` 또는 패키지 import
+    from .correlation_insight import build_company_correlation_insights
     from .dart_api import CompanyNotFoundError, DartAPIError
     from .financial_analysis import FINAL_COLUMNS, format_result_for_csv
     from .main import (
@@ -21,6 +22,7 @@ if __package__:  # ``python -m src.app`` 또는 패키지 import
         run_integrated_analysis,
     )
 else:  # ``python src/app.py``로 직접 실행
+    from correlation_insight import build_company_correlation_insights
     from dart_api import CompanyNotFoundError, DartAPIError
     from financial_analysis import FINAL_COLUMNS, format_result_for_csv
     from main import (
@@ -35,7 +37,13 @@ PROJECT_ROOT = APP_DIR.parent
 WEB_RUNS_DIR = OUTPUT_DIR / "web_runs"
 WEB_RUN_RETENTION_SECONDS = 60 * 60
 COMPLETED_MARKER_NAME = ".completed"
-STOCK_PERIOD_LABELS = {"1m": "1개월", "3m": "3개월", "1y": "1년", "3y": "3년"}
+STOCK_PERIOD_LABELS = {
+    "1m": "1개월",
+    "3m": "3개월",
+    "6m": "6개월",
+    "1y": "1년",
+    "3y": "3년",
+}
 AMOUNT_COLUMNS = {
     "매출",
     "보험서비스수익",
@@ -83,15 +91,132 @@ KPI_LABELS = {
     "bollinger_position": "볼린저밴드 내 위치",
     "usd_krw_latest": "원/달러 환율(최근)",
     "usd_krw_change": "원/달러 환율 기간 변화율",
+    "market_index_name": "비교 시장지수",
+    "market_index_latest": "시장지수(최근)",
+    "market_index_change": "시장지수 기간 수익률",
     "treasury_3y_latest": "국고채 3년 금리(최근)",
     "treasury_3y_change_bp": "국고채 3년 금리 기간 변화폭",
-    "corr_return_usd_krw": "주가 수익률-환율 상관계수",
-    "corr_return_treasury_3y": "주가 수익률-금리 상관계수",
-    "macro_filled_days": "환율, 금리 보간 거래일",
+    "credit_spread_latest": "신용 스프레드(최근)",
+    "credit_spread_change_bp": "신용 스프레드 기간 변화폭",
+    "corr_return_usd_krw": "주가 수익률-환율 변화율 상관계수",
+    "corr_return_market_index": "주가 수익률-시장지수 수익률 상관계수",
+    "corr_return_treasury_3y": "주가 수익률-금리 변화폭 상관계수",
+    "corr_return_credit_spread": "주가 수익률-신용 스프레드 변화폭 상관계수",
+    "corr_usd_krw_treasury_3y_level": "환율값-금리값 상관계수",
+    "corr_usd_krw_treasury_3y_change": "환율 변화율-금리 변화폭 상관계수",
+    "macro_filled_days": "외부 요인 보간 거래일",
     "price_outlier_days": "종가 하루 변화 이상치",
     "usd_krw_outlier_days": "환율 하루 변화 이상치",
+    "market_index_outlier_days": "시장지수 하루 변화 이상치",
     "treasury_3y_outlier_days": "금리 하루 변화 이상치",
+    "credit_spread_outlier_days": "신용 스프레드 하루 변화 이상치",
 }
+KPI_HELP_TEXT = {
+    "revenue_growth": (
+        "전년 매출 대비 당해 매출의 증감률입니다. 계산식은 "
+        "(당해 매출 ÷ 전년 매출 - 1) × 100입니다."
+    ),
+    "operating_profit_growth": (
+        "전년 영업이익 대비 당해 영업이익의 증감률입니다. 계산식은 "
+        "(당해 영업이익 ÷ 전년 영업이익 - 1) × 100입니다."
+    ),
+    "net_income_growth": (
+        "전년 당기순이익 대비 당해 당기순이익의 증감률입니다. 계산식은 "
+        "(당해 순이익 ÷ 전년 순이익 - 1) × 100입니다."
+    ),
+    "operating_margin": "매출 중 영업이익이 차지하는 비율로, 영업이익 ÷ 매출 × 100입니다.",
+    "net_margin": "매출 중 당기순이익이 차지하는 비율로, 당기순이익 ÷ 매출 × 100입니다.",
+    "roe": (
+        "자기자본으로 당기순이익을 얼마나 냈는지 나타냅니다. "
+        "당기순이익 ÷ 전년·당년 평균자본 × 100입니다."
+    ),
+    "roa": (
+        "총자산으로 당기순이익을 얼마나 냈는지 나타냅니다. "
+        "당기순이익 ÷ 전년·당년 평균자산 × 100입니다."
+    ),
+    "debt_ratio": "자기자본 대비 부채 비율로, 부채총계 ÷ 자본총계 × 100입니다.",
+    "interest_coverage_ratio": (
+        "영업이익으로 실제 지급한 이자를 감당하는 정도입니다. "
+        "영업이익 ÷ 현금흐름표상 이자지급액이며 단위는 배입니다."
+    ),
+    "accounts_receivable_days": (
+        "매출채권이 매출로 회수되는 데 걸리는 기간을 단순 환산한 값입니다. "
+        "기말 매출채권 ÷ 매출 × 365일입니다."
+    ),
+    "period_return": (
+        "선택한 주가 조회기간의 첫 종가와 마지막 종가를 비교한 수익률입니다. "
+        "계산식은 (마지막 종가 ÷ 첫 종가 - 1) × 100입니다."
+    ),
+    "daily_volatility": (
+        "선택 기간의 일간 종가 수익률이 얼마나 흩어져 있는지 나타내는 표준편차입니다. "
+        "값이 클수록 하루 가격 변동이 컸다는 뜻입니다."
+    ),
+    "average_volume": "선택한 주가 조회기간에 거래된 일평균 주식 수입니다.",
+    "average_trading_value": "선택한 주가 조회기간의 일별 거래대금을 평균한 값입니다.",
+    "recent_volume_change": (
+        "최근 20거래일 평균 거래량을 그 직전 20거래일 평균과 비교한 변화율입니다. "
+        "계산하려면 최소 40거래일이 필요합니다."
+    ),
+    "price_to_ma20": (
+        "최근 종가가 20일 이동평균보다 얼마나 높거나 낮은지 나타냅니다. "
+        "양수는 이동평균 위, 음수는 이동평균 아래를 뜻합니다."
+    ),
+    "bollinger_position": (
+        "최근 종가의 볼린저밴드 내 상대 위치입니다. 하단은 0%, 중간선은 50%, "
+        "상단은 100%이며 밴드 밖이면 0% 미만 또는 100% 초과가 될 수 있습니다."
+    ),
+    "usd_krw_change": (
+        "선택한 주가 조회기간의 첫 원/달러 환율과 마지막 환율을 비교한 값입니다. "
+        "계산식은 (마지막 환율 ÷ 첫 환율 - 1) × 100이며 단위는 %입니다."
+    ),
+    "market_index_name": (
+        "주식시세의 시장구분에 따라 자동 연결한 비교 기준입니다. "
+        "KOSPI 기업은 KOSPI, KOSDAQ 기업은 KOSDAQ을 사용합니다."
+    ),
+    "market_index_latest": (
+        "해당 기업의 마지막 주식 거래일에 확인되는 비교 시장지수 종가입니다. "
+        "KOSPI와 KOSDAQ은 지수 단위(p)로 표시합니다."
+    ),
+    "market_index_change": (
+        "선택한 주가 조회기간의 첫 시장지수 종가와 마지막 종가를 비교한 "
+        "수익률입니다. 기업과 같은 시장 전체의 흐름을 보여 줍니다."
+    ),
+    "corr_return_market_index": (
+        "기업의 일간 주가 수익률과 해당 기업이 상장된 시장지수의 일간 수익률 간 "
+        "Pearson 상관계수입니다. 시장 영향을 제거한 값은 아닙니다."
+    ),
+    "market_index_outlier_days": (
+        "비교 시장지수의 일간 수익률이 IQR 기준 통상 범위를 벗어난 거래일 수입니다. "
+        "오류로 단정하지 않고 확인 대상으로 표시합니다."
+    ),
+    "treasury_3y_change_bp": (
+        "선택한 주가 조회기간의 마지막 국고채 3년 금리에서 첫 금리를 뺀 값입니다. "
+        "금리 변화율이 아니라 변화폭이며, 1bp는 0.01%p입니다."
+    ),
+    "credit_spread_latest": (
+        "같은 날의 회사채 3년 AA- 금리에서 국고채 3년 금리를 뺀 값입니다. "
+        "기업 신용위험에 대해 시장이 추가로 요구하는 금리 차이를 나타내며, "
+        "1bp는 0.01%p입니다."
+    ),
+    "credit_spread_change_bp": (
+        "선택한 주가 조회기간의 마지막 신용 스프레드에서 첫 신용 스프레드를 "
+        "뺀 값입니다. 양수는 스프레드 확대, 음수는 축소를 뜻합니다."
+    ),
+    "corr_return_credit_spread": (
+        "일간 주가 수익률과 신용 스프레드 일간 변화폭의 Pearson 상관계수입니다. "
+        "기업의 실제 차입금리나 인과관계를 뜻하지 않습니다."
+    ),
+    "corr_usd_krw_treasury_3y_level": (
+        "주의: 수준값 상관계수는 환율과 금리의 공통 추세만으로도 높게 나타날 수 "
+        "있습니다. 직접적인 관계나 인과관계로 해석하지 말고 변화량 상관계수와 함께 "
+        "확인하세요."
+    ),
+    "macro_filled_days": (
+        "주식 거래일에 시장지수·환율·국고채·회사채 관측값이 없어 직전 값(첫 구간은 다음 값)으로 "
+        "채운 날짜 수입니다. 보간된 구간은 상관계수와 이상치 계산에서 제외됩니다."
+    ),
+}
+KPI_WARNING_KEYS = {"corr_usd_krw_treasury_3y_level"}
 
 app = Flask(
     __name__,
@@ -241,6 +366,17 @@ def format_kpi_metric(metric: dict) -> str:
     return f"{value:,.2f}".rstrip("0").rstrip(".") + unit
 
 
+def build_kpi_card_metric(name: str, metric: dict) -> dict:
+    """KPI 표시값과 마우스·키보드 도움말을 하나의 화면 항목으로 만든다."""
+    return {
+        "label": KPI_LABELS.get(name, name),
+        "value": format_kpi_metric(metric),
+        "reason": metric.get("reason"),
+        "help_text": KPI_HELP_TEXT.get(name),
+        "help_kind": "warning" if name in KPI_WARNING_KEYS else "info",
+    }
+
+
 def build_kpi_cards(payload: dict) -> list[dict]:
     cards = []
     for company in payload.get("companies", []):
@@ -250,28 +386,16 @@ def build_kpi_cards(payload: dict) -> list[dict]:
                 "analysis_type": company["analysis_type"],
                 "financial_period": company["financial_period"],
                 "financial": [
-                    {
-                        "label": KPI_LABELS.get(name, name),
-                        "value": format_kpi_metric(metric),
-                        "reason": metric.get("reason"),
-                    }
+                    build_kpi_card_metric(name, metric)
                     for name, metric in company["financial_kpi"].items()
                     if metric.get("status") != "not_applicable"
                 ],
                 "market": [
-                    {
-                        "label": KPI_LABELS.get(name, name),
-                        "value": format_kpi_metric(metric),
-                        "reason": metric.get("reason"),
-                    }
+                    build_kpi_card_metric(name, metric)
                     for name, metric in company["market_kpi"].items()
                 ],
                 "macro": [
-                    {
-                        "label": KPI_LABELS.get(name, name),
-                        "value": format_kpi_metric(metric),
-                        "reason": metric.get("reason"),
-                    }
+                    build_kpi_card_metric(name, metric)
                     for name, metric in company.get("macro_kpi", {}).items()
                 ],
             }
@@ -307,6 +431,7 @@ def _format_evidence(company: str, metric_key: str, lookup: dict) -> dict:
         "key": metric_key,
         "label": _kpi_label(metric_key),
         "value": format_kpi_metric(metric),
+        "observations": metric.get("observations"),
     }
 
 
@@ -365,6 +490,34 @@ def build_gpt_cards(insights: list[dict], comparisons: list[dict], payload: dict
             }
         )
     return cards, comparison_cards
+
+
+HEATMAP_FILENAME_PATTERN = re.compile(r"^market_correlation_heatmap_(.+)\.png$")
+
+
+def build_stock_chart_items(
+    chart_paths: list[Path], run_id: str, stock_summary, payload: dict
+) -> list[dict]:
+    """차트 URL에 기업별 히트맵 인사이트를 연결한다."""
+    insight_by_company = build_company_correlation_insights(payload)
+    insight_by_code = {
+        str(row["종목코드"]): insight_by_company.get(row["기업명"])
+        for _, row in stock_summary.iterrows()
+    }
+    items = []
+    for path in chart_paths:
+        match = HEATMAP_FILENAME_PATTERN.fullmatch(path.name)
+        insight = insight_by_code.get(match.group(1)) if match else None
+        items.append(
+            {
+                "url": url_for(
+                    "run_file", run_id=run_id, filename=f"stock_charts/{path.name}"
+                ),
+                "filename": path.name,
+                "insight": insight,
+            }
+        )
+    return items
 
 
 @app.get("/")
@@ -492,10 +645,12 @@ def analyze():
         for filename in chart_files
     ]
     stock_charts_dir = run_dir / "stock_charts"
-    stock_chart_urls = [
-        url_for("run_file", run_id=run_id, filename=f"stock_charts/{path.name}")
-        for path in sorted(stock_charts_dir.glob("*.png"))
-    ]
+    stock_chart_items = build_stock_chart_items(
+        sorted(stock_charts_dir.glob("*.png")),
+        run_id,
+        integrated.stock_summary,
+        integrated.kpi_payload,
+    )
     stock_columns = list(integrated.stock_summary.columns)
     stock_rows = [
         [format_stock_value(column, row[column]) for column in stock_columns]
@@ -561,7 +716,7 @@ def analyze():
         columns=visible_columns,
         rows=rows,
         chart_urls=chart_urls,
-        stock_chart_urls=stock_chart_urls,
+        stock_chart_items=stock_chart_items,
         stock_columns=stock_columns,
         stock_rows=stock_rows,
         stock_cards=stock_cards,

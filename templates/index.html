@@ -41,7 +41,7 @@
           <div>
             <label for="stock_period">주가 조회 기간</label>
             <select id="stock_period" name="stock_period">
-              {% for value, label in [('1m', '1개월'), ('3m', '3개월'), ('1y', '1년'), ('3y', '3년')] %}
+              {% for value, label in [('1m', '1개월'), ('3m', '3개월'), ('6m', '6개월'), ('1y', '1년'), ('3y', '3년')] %}
                 <option value="{{ value }}" {% if value == stock_period %}selected{% endif %}>{{ label }}</option>
               {% endfor %}
             </select>

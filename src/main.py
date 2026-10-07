@@ -38,10 +38,13 @@ if __package__:  # ``python -m src.main`` 또는 패키지 import
     from .gpt_analysis import GPTAnalysisError, analyze_kpis
     from .kpi_analysis import build_kpi_payload
     from .macro_analysis import (
+        CORPORATE_BOND_COLUMN,
         FX_COLUMN,
         MACRO_LOOKBACK_DAYS,
+        MARKET_INDEX_COLUMN,
         MARKET_MACRO_COLUMNS,
         RATE_COLUMN,
+        market_index_for_category,
         merge_macro_with_prices,
         prepare_macro_series,
     )
@@ -55,8 +58,11 @@ if __package__:  # ``python -m src.main`` 또는 패키지 import
     from .stock_analysis import prepare_stock_prices, summarize_stock_prices
     from .stock_api import StockAPIError, StockClient, get_stock_api_key
     from .stock_visualization import (
+        create_rolling_correlation_visualizations,
         create_daily_change_visualizations,
+        create_fx_rate_scatter_visualizations,
         create_macro_visualizations,
+        create_market_correlation_heatmaps,
         create_stock_visualizations,
     )
 else:  # ``python src/main.py``로 직접 실행
@@ -83,10 +89,13 @@ else:  # ``python src/main.py``로 직접 실행
     from gpt_analysis import GPTAnalysisError, analyze_kpis
     from kpi_analysis import build_kpi_payload
     from macro_analysis import (
+        CORPORATE_BOND_COLUMN,
         FX_COLUMN,
         MACRO_LOOKBACK_DAYS,
+        MARKET_INDEX_COLUMN,
         MARKET_MACRO_COLUMNS,
         RATE_COLUMN,
+        market_index_for_category,
         merge_macro_with_prices,
         prepare_macro_series,
     )
@@ -100,8 +109,11 @@ else:  # ``python src/main.py``로 직접 실행
     from stock_analysis import prepare_stock_prices, summarize_stock_prices
     from stock_api import StockAPIError, StockClient, get_stock_api_key
     from stock_visualization import (
+        create_rolling_correlation_visualizations,
         create_daily_change_visualizations,
+        create_fx_rate_scatter_visualizations,
         create_macro_visualizations,
+        create_market_correlation_heatmaps,
         create_stock_visualizations,
     )
 
@@ -117,7 +129,13 @@ PROJECT_ROOT = APP_DIR.parent
 OUTPUT_DIR = PROJECT_ROOT / "output"
 CLI_OUTPUT_DIR = OUTPUT_DIR / "cli"
 CACHE_DIR = PROJECT_ROOT / ".cache"
-STOCK_PERIOD_DAYS = {"1m": 31, "3m": 92, "1y": 366, "3y": 1096}
+STOCK_PERIOD_DAYS = {
+    "1m": 31,
+    "3m": 92,
+    "6m": 183,
+    "1y": 366,
+    "3y": 1096,
+}
 LOGGER = logging.getLogger(__name__)
 ProgressCallback = Callable[[str, int, str], None]
 
@@ -204,8 +222,9 @@ def collect_market_macro(
     warnings: list[str],
     progress_callback: ProgressCallback | None = None,
     log: QualityLog | None = None,
+    stock_client: StockClient | None = None,
 ) -> pd.DataFrame:
-    """주가 거래일 범위의 환율·금리를 수집해 거래일 기준으로 병합한다.
+    """기업별 시장지수와 공통 외부요인을 수집해 거래일 기준으로 병합한다.
 
     API 키가 없거나 호출이 실패해도 경고만 남기고 빈 열로 계속 진행한다.
     """
@@ -216,6 +235,63 @@ def collect_market_macro(
     trading_end = stock_prices["기준일"].max().date()
     # 첫 거래일의 매크로 값이 비었을 때 ffill할 직전 값을 확보한다.
     fetch_start = trading_start - timedelta(days=MACRO_LOOKBACK_DAYS)
+
+    _notify_progress(progress_callback, "macro", 69, "기업별 시장지수를 수집하고 있습니다.")
+    market_indices: dict[str, pd.DataFrame] = {}
+    categories = (
+        stock_prices["시장구분"].dropna().astype(str).unique().tolist()
+        if "시장구분" in stock_prices
+        else []
+    )
+    requested_markets = {
+        market
+        for category in categories
+        if (market := market_index_for_category(category)) is not None
+    }
+    unsupported_categories = sorted(
+        {
+            category
+            for category in categories
+            if market_index_for_category(category) is None
+        }
+    )
+    if unsupported_categories:
+        warnings.append(
+            "시장지수 자동 연결을 지원하지 않는 시장구분: "
+            + ", ".join(unsupported_categories)
+        )
+    if stock_client is not None:
+        for market in sorted(requested_markets):
+            try:
+                index_items = stock_client.get_market_index_prices(
+                    market, fetch_start, trading_end
+                )
+                parsed_rows = []
+                for item in index_items:
+                    time_text = str(item.get("basDt", "")).strip()
+                    try:
+                        value = float(str(item.get("clpr", "")).replace(",", ""))
+                    except (TypeError, ValueError):
+                        continue
+                    if len(time_text) != 8 or not time_text.isdigit():
+                        continue
+                    parsed_rows.append(
+                        (
+                            date(
+                                int(time_text[:4]),
+                                int(time_text[4:6]),
+                                int(time_text[6:]),
+                            ),
+                            value,
+                        )
+                    )
+                market_indices[market] = prepare_macro_series(
+                    parsed_rows, MARKET_INDEX_COLUMN
+                )
+                if not parsed_rows:
+                    warnings.append(f"{market} 시장지수 데이터가 없습니다.")
+            except (StockAPIError, ValueError) as error:
+                warnings.append(f"{market} 시장지수를 불러오지 못했습니다. ({error})")
 
     _notify_progress(progress_callback, "macro", 71, "원/달러 환율을 수집하고 있습니다.")
     fx_rows: list = []
@@ -234,25 +310,47 @@ def collect_market_macro(
 
     _notify_progress(progress_callback, "macro", 74, "국고채 3년 금리를 수집하고 있습니다.")
     rate_rows: list = []
+    corporate_bond_rows: list = []
+    rate_client = None
     try:
         rate_client = InterestRateClient(get_ecos_api_key(PROJECT_ROOT))
         rate_rows = rate_client.get_treasury_3y(fetch_start, trading_end).rows
     except (MacroAPIError, ValueError) as error:
         warnings.append(f"금리 데이터를 불러오지 못했습니다. ({error})")
 
-    # 환율·금리를 모두 못 받아도 종가 하루 변화 이상치는 표시한다.
+    _notify_progress(
+        progress_callback,
+        "macro",
+        76,
+        "회사채 AA- 금리와 신용 스프레드를 수집하고 있습니다.",
+    )
+    if rate_client is not None:
+        try:
+            corporate_bond_rows = rate_client.get_corporate_aa_minus_3y(
+                fetch_start, trading_end
+            ).rows
+        except (MacroAPIError, ValueError) as error:
+            warnings.append(f"회사채 AA- 금리를 불러오지 못했습니다. ({error})")
+
+    # 외부 요인을 모두 못 받아도 종가 하루 변화 이상치는 표시한다.
     merged = merge_macro_with_prices(
-        stock_prices,
-        prepare_macro_series(fx_rows, FX_COLUMN),
-        prepare_macro_series(rate_rows, RATE_COLUMN),
+        prices=stock_prices,
+        fx=prepare_macro_series(fx_rows, FX_COLUMN),
+        rate=prepare_macro_series(rate_rows, RATE_COLUMN),
+        corporate_bond=prepare_macro_series(
+            corporate_bond_rows, CORPORATE_BOND_COLUMN
+        ),
+        market_indices=market_indices,
         log=log,
     )
     LOGGER.info(
-        "macro_merged trading_rows=%d merged_rows=%d fx_rows=%d rate_rows=%d",
+        "macro_merged trading_rows=%d merged_rows=%d market_indices=%s fx_rows=%d rate_rows=%d corporate_bond_rows=%d",
         len(stock_prices),
         len(merged),
+        {name: len(frame) for name, frame in market_indices.items()},
         len(fx_rows),
         len(rate_rows),
+        len(corporate_bond_rows),
     )
     return merged
 
@@ -393,7 +491,7 @@ def run_integrated_analysis(
 ) -> IntegratedAnalysisResult:
     """재무분석 후 상장기업의 일별 주식시세를 결합한다."""
     if stock_period not in STOCK_PERIOD_DAYS:
-        raise ValueError("주가 조회 기간은 1m, 3m, 1y, 3y 중 하나여야 합니다.")
+        raise ValueError("주가 조회 기간은 1m, 3m, 6m, 1y, 3y 중 하나여야 합니다.")
 
     target_output_dir = Path(output_dir) if output_dir is not None else CLI_OUTPUT_DIR
     financial = run_analysis(
@@ -493,7 +591,11 @@ def run_integrated_analysis(
         investor_summary = empty_investor_summary()
 
     market_macro = collect_market_macro(
-        stock_prices, warnings, progress_callback, log=quality_log
+        stock_prices,
+        warnings,
+        progress_callback,
+        log=quality_log,
+        stock_client=stock_client,
     )
     if not market_macro.empty:
         market_macro.to_csv(
@@ -502,6 +604,15 @@ def run_integrated_analysis(
         create_macro_visualizations(market_macro, target_output_dir / "stock_charts")
         create_daily_change_visualizations(
             market_macro, target_output_dir / "stock_charts"
+        )
+        create_fx_rate_scatter_visualizations(
+            market_macro, target_output_dir / "stock_charts"
+        )
+        create_market_correlation_heatmaps(
+            market_macro, target_output_dir / "stock_charts"
+        )
+        create_rolling_correlation_visualizations(
+            market_macro, target_output_dir / "stock_charts", stock_period
         )
 
     quality_frame = quality_log.to_frame()

@@ -21,6 +21,11 @@ BASE_URL = (
     "https://apis.data.go.kr/1160100/"
     "GetStockSecuritiesInfoService_V2/getStockPriceInfo_V2"
 )
+MARKET_INDEX_URL = (
+    "https://apis.data.go.kr/1160100/"
+    "GetMarketIndexInfoService_V2/getStockMarketIndex_V2"
+)
+SUPPORTED_MARKET_INDICES = {"KOSPI": "코스피", "KOSDAQ": "코스닥"}
 
 
 class StockAPIError(RuntimeError):
@@ -57,9 +62,17 @@ class StockClient:
         self.api_key = api_key
 
     def _request_page(self, params: dict, timeout: int = 30) -> dict:
+        return self._request_endpoint(BASE_URL, params, timeout)
+
+    def _request_market_index_page(
+        self, params: dict, timeout: int = 30
+    ) -> dict:
+        return self._request_endpoint(MARKET_INDEX_URL, params, timeout)
+
+    def _request_endpoint(self, endpoint: str, params: dict, timeout: int) -> dict:
         query = urlencode({"serviceKey": self.api_key, **params})
         request = Request(
-            f"{BASE_URL}?{query}",
+            f"{endpoint}?{query}",
             headers={"User-Agent": "dart-financial-analysis/2.0"},
         )
         try:
@@ -140,4 +153,47 @@ class StockClient:
                 break
             page_no += 1
 
+        return collected
+
+    def get_market_index_prices(
+        self,
+        market: str,
+        start_date: date,
+        end_date: date,
+        page_size: int = 1000,
+    ) -> list[dict]:
+        """KOSPI 또는 KOSDAQ 대표지수의 일별 시세를 반환한다."""
+        normalized_market = market.strip().upper()
+        if normalized_market not in SUPPORTED_MARKET_INDICES:
+            raise ValueError("시장지수는 KOSPI 또는 KOSDAQ이어야 합니다.")
+        if start_date > end_date:
+            raise ValueError("시장지수 시작일은 종료일보다 늦을 수 없습니다.")
+        if not 1 <= page_size <= 10000:
+            raise ValueError("page_size는 1~10000이어야 합니다.")
+
+        exclusive_end = end_date + timedelta(days=1)
+        page_no = 1
+        collected: list[dict] = []
+        total_count = None
+        while total_count is None or len(collected) < total_count:
+            response_data = self._request_market_index_page(
+                {
+                    "numOfRows": str(page_size),
+                    "pageNo": str(page_no),
+                    "resultType": "json",
+                    "beginBasDt": start_date.strftime("%Y%m%d"),
+                    "endBasDt": exclusive_end.strftime("%Y%m%d"),
+                    "idxNm": SUPPORTED_MARKET_INDICES[normalized_market],
+                }
+            )
+            body = response_data.get("body") or {}
+            total_count = int(body.get("totalCount") or 0)
+            items_node = body.get("items") or {}
+            page_items = items_node.get("item", []) if isinstance(items_node, dict) else []
+            if isinstance(page_items, dict):
+                page_items = [page_items]
+            collected.extend(page_items)
+            if not page_items or page_no * page_size >= total_count:
+                break
+            page_no += 1
         return collected

@@ -73,25 +73,43 @@ ROE 변화는 부채비율 등 자본구조와 함께 해석하고 하나의 지
 이동평균과 볼린저 밴드 위치를 분석하십시오. 기업 실적과 주가 움직임을 같은
 개념으로 취급하지 마십시오.
 
-## 외부 요인(환율·금리)
+## 시장 및 외부 요인(시장지수·환율·금리·신용 스프레드)
 
-macro_kpi는 주식 거래일 기준으로 맞춘 원/달러 매매기준율(usd_krw_*)과 국고채
-3년 금리(treasury_3y_*)입니다. 기간은 시장 기준 기간과 같습니다.
+macro_kpi는 기업의 시장구분에 맞춘 KOSPI/KOSDAQ 지수(market_index_*),
+주식 거래일 기준 원/달러 매매기준율(usd_krw_*)과 국고채
+3년 금리(treasury_3y_*), 회사채 3년 AA-와 국고채 3년의 차이인 신용 스프레드
+(credit_spread_*)입니다. 기간은 시장 기준 기간과 같습니다.
 
 - usd_krw_change는 기간 변화율(%), treasury_3y_change_bp는 기간 변화폭(bp)입니다.
+- market_index_name은 기업별 비교지수이며 KOSPI 기업은 KOSPI, KOSDAQ 기업은
+  KOSDAQ입니다. corr_return_market_index는 기업과 해당 시장의 동행성이지 시장
+  영향을 제거한 결과가 아닙니다.
 - corr_return_usd_krw, corr_return_treasury_3y는 일간 주가 수익률과 환율 변화율·
   금리 변화폭의 상관계수입니다. 상관은 인과가 아니므로 "함께 움직이는 경향",
   "뚜렷한 연관이 보이지 않음"처럼 표현하고 환율·금리가 주가를 움직였다고
   단정하지 마십시오. 절댓값이 작으면 연관성이 약하다고만 서술하십시오.
-- 환율·금리의 향후 수준이나 방향, 통화정책을 예측하지 마십시오.
+- corr_return_credit_spread는 일간 주가 수익률과 신용 스프레드 변화폭의
+  상관계수입니다. 신용 스프레드 확대는 시장 전반의 기업 신용위험 보상이
+  커졌다는 뜻이지만 해당 기업의 실제 차입금리·부도위험으로 단정하지 마십시오.
+- corr_usd_krw_treasury_3y_level은 환율값과 금리값의 상관계수이고,
+  corr_usd_krw_treasury_3y_change는 일간 환율 변화율과 금리 변화폭의 상관계수입니다.
+  수준값 상관은 공통 추세 때문에 높아질 수 있으므로 변화량 상관과 함께 제한적으로
+  해석하고, 어느 한쪽이 다른 쪽을 변화시켰다고 단정하지 마십시오.
+- 상관계수는 유효 관측일이 10일 이상이면 제공됩니다. 1개월처럼 표본이 짧은 결과는
+  소수의 날짜에 민감하므로 장기 상관보다 불확실성이 크다는 한계를 함께 설명하십시오.
+- 환율·금리·신용 스프레드의 향후 수준이나 방향을 예측하지 마십시오.
 - macro_filled_days는 휴일·수집 실패로 직전 값(첫 구간은 다음 값)을 사용한 거래일
   수입니다.
-- price_outlier_days, usd_krw_outlier_days, treasury_3y_outlier_days는 하루 변화가
+- price_outlier_days, market_index_outlier_days, usd_krw_outlier_days,
+  treasury_3y_outlier_days,
+  credit_spread_outlier_days는 하루 변화가
   IQR 범위를 벗어나 '표시'된 거래일 수일 뿐입니다. 해당 날짜의 값은 지우거나 바꾸지
   않았습니다. 입력 오류나 특정 사건으로 단정하지 말고 "원인 확인 필요"로
   서술하십시오. 소수점·단위 입력 오류는 이미 보정된 값입니다.
 - 외부 요인 해석은 market 또는 relationships_and_mismatches 섹션에 작성하고
   evidence_keys에 macro_kpi 키를 그대로 사용하십시오.
+- 원/달러 환율 상승은 원화 약세, 하락은 원화 강세로 정확히 표현하되 주가 상관계수는
+  시장 동행성 참고자료일 뿐 영업 노출, 재무 완충력 또는 인과관계로 해석하지 마십시오.
 
 ## KPI 관계와 불일치
 

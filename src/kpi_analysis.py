@@ -10,12 +10,21 @@ import pandas as pd
 if __package__:
     from .data_quality import daily_change, pair_valid
     from .macro_analysis import (
+        CREDIT_SPREAD_CHANGE_BP_COLUMN,
+        CREDIT_SPREAD_COLUMN,
+        CREDIT_SPREAD_FILLED_COLUMN,
+        CREDIT_SPREAD_OUTLIER_COLUMN,
         FX_CHANGE_COLUMN,
         FX_COLUMN,
         PRICE_CHANGE_COLUMN,
         RATE_CHANGE_PP_COLUMN,
         FX_FILLED_COLUMN,
         FX_OUTLIER_COLUMN,
+        MARKET_INDEX_COLUMN,
+        MARKET_INDEX_FILLED_COLUMN,
+        MARKET_INDEX_NAME_COLUMN,
+        MARKET_INDEX_OUTLIER_COLUMN,
+        MARKET_INDEX_RETURN_COLUMN,
         PRICE_OUTLIER_COLUMN,
         RATE_COLUMN,
         RATE_FILLED_COLUMN,
@@ -25,12 +34,21 @@ if __package__:
 else:
     from data_quality import daily_change, pair_valid
     from macro_analysis import (
+        CREDIT_SPREAD_CHANGE_BP_COLUMN,
+        CREDIT_SPREAD_COLUMN,
+        CREDIT_SPREAD_FILLED_COLUMN,
+        CREDIT_SPREAD_OUTLIER_COLUMN,
         FX_CHANGE_COLUMN,
         FX_COLUMN,
         PRICE_CHANGE_COLUMN,
         RATE_CHANGE_PP_COLUMN,
         FX_FILLED_COLUMN,
         FX_OUTLIER_COLUMN,
+        MARKET_INDEX_COLUMN,
+        MARKET_INDEX_FILLED_COLUMN,
+        MARKET_INDEX_NAME_COLUMN,
+        MARKET_INDEX_OUTLIER_COLUMN,
+        MARKET_INDEX_RETURN_COLUMN,
         PRICE_OUTLIER_COLUMN,
         RATE_COLUMN,
         RATE_FILLED_COLUMN,
@@ -39,23 +57,38 @@ else:
     from stock_analysis import add_bollinger_bands, add_moving_averages
 
 
-MIN_CORRELATION_OBSERVATIONS = 20
+# 1개월 조회에서도 주말·휴일·첫 변화량 행을 제외한 상관계수를 볼 수 있도록
+# 최소 표본을 10일로 둔다. 짧은 표본의 결과는 장기 결과보다 변동성이 크다.
+MIN_CORRELATION_OBSERVATIONS = 10
 MACRO_KPI_UNITS = {
     "usd_krw_latest": "원",
     "usd_krw_change": "%",
+    "market_index_name": "",
+    "market_index_latest": "p",
+    "market_index_change": "%",
     "treasury_3y_latest": "%",
     "treasury_3y_change_bp": "bp",
+    "credit_spread_latest": "bp",
+    "credit_spread_change_bp": "bp",
     "corr_return_usd_krw": "",
+    "corr_return_market_index": "",
     "corr_return_treasury_3y": "",
+    "corr_return_credit_spread": "",
+    "corr_usd_krw_treasury_3y_level": "",
+    "corr_usd_krw_treasury_3y_change": "",
     "macro_filled_days": "일",
     "price_outlier_days": "일",
     "usd_krw_outlier_days": "일",
+    "market_index_outlier_days": "일",
     "treasury_3y_outlier_days": "일",
+    "credit_spread_outlier_days": "일",
 }
 OUTLIER_KPI_COLUMNS = {
     "price_outlier_days": PRICE_OUTLIER_COLUMN,
     "usd_krw_outlier_days": FX_OUTLIER_COLUMN,
+    "market_index_outlier_days": MARKET_INDEX_OUTLIER_COLUMN,
     "treasury_3y_outlier_days": RATE_OUTLIER_COLUMN,
+    "credit_spread_outlier_days": CREDIT_SPREAD_OUTLIER_COLUMN,
 }
 
 
@@ -294,19 +327,19 @@ def _market_kpis(company_prices: pd.DataFrame) -> dict[str, dict]:
 
 
 def _correlation(
-    returns: pd.Series, changes: pd.Series, valid: pd.Series
+    first: pd.Series, second: pd.Series, valid: pd.Series
 ) -> tuple[float | None, str | None, str | None]:
-    """보간하지 않은 연속 관측일의 일간 수익률·매크로 변화 상관계수."""
-    pairs = pd.DataFrame({"returns": returns, "changes": changes})[valid].dropna()
+    """유효한 두 수치 시계열의 Pearson 상관계수와 KPI 상태를 반환한다."""
+    pairs = pd.DataFrame({"first": first, "second": second})[valid].dropna()
     if len(pairs) < MIN_CORRELATION_OBSERVATIONS:
         return (
             None,
             "no_comparison_period",
             f"상관계수 계산에 필요한 관측일({MIN_CORRELATION_OBSERVATIONS}일)이 부족함",
         )
-    if pairs["returns"].std() == 0 or pairs["changes"].std() == 0:
+    if pairs["first"].std() == 0 or pairs["second"].std() == 0:
         return None, "missing", "변동이 없어 상관계수를 계산할 수 없음"
-    return float(pairs["returns"].corr(pairs["changes"])), None, None
+    return float(pairs.corr(method="pearson").loc["first", "second"]), None, None
 
 
 def _change_column(data: pd.DataFrame, column: str, source: str, kind: str) -> pd.Series:
@@ -317,8 +350,8 @@ def _change_column(data: pd.DataFrame, column: str, source: str, kind: str) -> p
 
 
 def _macro_kpis(company_macro: pd.DataFrame | None) -> dict[str, dict]:
-    """주식 거래일 기준으로 맞춘 환율·금리의 기간 변화와 주가 연관성."""
-    missing_reason = "환율/금리 원천 데이터 없음"
+    """주식 거래일 기준 외부 요인의 기간 변화와 주가 연관성."""
+    missing_reason = "외부 요인 원천 데이터 없음"
     if company_macro is None or company_macro.empty:
         return {
             name: _metric(None, unit, status="missing", reason=missing_reason)
@@ -327,11 +360,32 @@ def _macro_kpis(company_macro: pd.DataFrame | None) -> dict[str, dict]:
 
     data = company_macro.sort_values("기준일").reset_index(drop=True)
     fx = pd.to_numeric(data[FX_COLUMN], errors="coerce")
+    market_index = pd.to_numeric(
+        data.get(MARKET_INDEX_COLUMN, pd.Series(index=data.index, dtype="float64")),
+        errors="coerce",
+    )
+    market_names = data.get(
+        MARKET_INDEX_NAME_COLUMN, pd.Series(index=data.index, dtype="object")
+    ).dropna()
     rate = pd.to_numeric(data[RATE_COLUMN], errors="coerce")
+    spread = pd.to_numeric(
+        data.get(CREDIT_SPREAD_COLUMN, pd.Series(index=data.index, dtype="float64")),
+        errors="coerce",
+    )
     fx_filled = data[FX_FILLED_COLUMN].fillna(False).astype(bool)
+    market_index_filled = data.get(
+        MARKET_INDEX_FILLED_COLUMN,
+        pd.Series(False, index=data.index),
+    ).fillna(False).astype(bool)
     rate_filled = data[RATE_FILLED_COLUMN].fillna(False).astype(bool)
+    spread_filled = data.get(
+        CREDIT_SPREAD_FILLED_COLUMN,
+        pd.Series(False, index=data.index),
+    ).fillna(False).astype(bool)
     fx_valid = fx.dropna()
+    market_index_valid = market_index.dropna()
     rate_valid = rate.dropna()
+    spread_valid = spread.dropna()
 
     fx_change = (
         _safe_ratio(fx_valid.iloc[-1] - fx_valid.iloc[0], fx_valid.iloc[0])
@@ -341,19 +395,116 @@ def _macro_kpis(company_macro: pd.DataFrame | None) -> dict[str, dict]:
     rate_change_bp = (
         (rate_valid.iloc[-1] - rate_valid.iloc[0]) * 100 if len(rate_valid) >= 2 else None
     )
+    market_index_change = (
+        _safe_ratio(
+            market_index_valid.iloc[-1] - market_index_valid.iloc[0],
+            market_index_valid.iloc[0],
+        )
+        if len(market_index_valid) >= 2
+        else None
+    )
+    spread_change_bp = (
+        spread_valid.iloc[-1] - spread_valid.iloc[0]
+        if len(spread_valid) >= 2
+        else None
+    )
 
     # 병합 단계에서 만든 하루 변화 열(등락률·변화율·변화폭)을 그대로 쓴다.
     returns = _change_column(data, PRICE_CHANGE_COLUMN, "종가", "pct")
     # ffill한 날의 변화량은 0으로 보여 상관을 왜곡하므로 당일·전일 모두 실제 관측일만 쓴다.
     fx_pair_valid = pair_valid(fx_filled)
     rate_pair_valid = pair_valid(rate_filled)
+    fx_daily_change = _change_column(data, FX_CHANGE_COLUMN, FX_COLUMN, "pct")
+    market_index_daily_return = (
+        _change_column(
+            data,
+            MARKET_INDEX_RETURN_COLUMN,
+            MARKET_INDEX_COLUMN,
+            "pct",
+        )
+        if MARKET_INDEX_COLUMN in data
+        else pd.Series(float("nan"), index=data.index)
+    )
+    rate_daily_change = _change_column(
+        data, RATE_CHANGE_PP_COLUMN, RATE_COLUMN, "diff"
+    )
+    spread_daily_change = (
+        _change_column(
+            data,
+            CREDIT_SPREAD_CHANGE_BP_COLUMN,
+            CREDIT_SPREAD_COLUMN,
+            "diff",
+        )
+        if CREDIT_SPREAD_COLUMN in data
+        else pd.Series(float("nan"), index=data.index)
+    )
     fx_corr, fx_corr_status, fx_corr_reason = _correlation(
-        returns, _change_column(data, FX_CHANGE_COLUMN, FX_COLUMN, "pct"), fx_pair_valid
+        returns, fx_daily_change, fx_pair_valid
+    )
+    market_index_pair_valid = pair_valid(market_index_filled)
+    market_index_corr, market_index_corr_status, market_index_corr_reason = _correlation(
+        returns,
+        market_index_daily_return,
+        market_index_pair_valid,
     )
     rate_corr, rate_corr_status, rate_corr_reason = _correlation(
         returns,
-        _change_column(data, RATE_CHANGE_PP_COLUMN, RATE_COLUMN, "diff"),
+        rate_daily_change,
         rate_pair_valid,
+    )
+    spread_pair_valid = pair_valid(spread_filled)
+    spread_corr, spread_corr_status, spread_corr_reason = _correlation(
+        returns,
+        spread_daily_change,
+        spread_pair_valid,
+    )
+    fx_corr_observations = int(
+        pd.concat(
+            [returns.where(fx_pair_valid), fx_daily_change.where(fx_pair_valid)],
+            axis=1,
+        )
+        .dropna()
+        .shape[0]
+    )
+    market_index_corr_observations = int(
+        pd.concat(
+            [
+                returns.where(market_index_pair_valid),
+                market_index_daily_return.where(market_index_pair_valid),
+            ],
+            axis=1,
+        )
+        .dropna()
+        .shape[0]
+    )
+    rate_corr_observations = int(
+        pd.concat(
+            [returns.where(rate_pair_valid), rate_daily_change.where(rate_pair_valid)],
+            axis=1,
+        )
+        .dropna()
+        .shape[0]
+    )
+    spread_corr_observations = int(
+        pd.concat(
+            [
+                returns.where(spread_pair_valid),
+                spread_daily_change.where(spread_pair_valid),
+            ],
+            axis=1,
+        )
+        .dropna()
+        .shape[0]
+    )
+    # 수준값은 두 지표가 모두 실제 관측된 날만 사용한다.
+    macro_level_valid = ~(fx_filled | rate_filled)
+    level_corr, level_corr_status, level_corr_reason = _correlation(
+        fx, rate, macro_level_valid
+    )
+    # 변화량은 두 지표 모두 당일과 전일이 실제 관측된 연속 구간만 사용한다.
+    macro_change_valid = fx_pair_valid & rate_pair_valid
+    change_corr, change_corr_status, change_corr_reason = _correlation(
+        fx_daily_change, rate_daily_change, macro_change_valid
     )
 
     def series_metric(series: pd.Series, value, unit: str, **options) -> dict[str, Any]:
@@ -361,11 +512,31 @@ def _macro_kpis(company_macro: pd.DataFrame | None) -> dict[str, dict]:
             return _metric(None, unit, status="missing", reason=missing_reason)
         return _metric(value, unit, **options)
 
-    return {
+    def paired_series_metric(value, **options) -> dict[str, Any]:
+        """환율과 금리 중 하나라도 없으면 두 지표의 관계를 계산 불가로 표시한다."""
+        if fx_valid.empty or rate_valid.empty:
+            return _metric(None, "", status="missing", reason=missing_reason)
+        return _metric(value, "", **options)
+
+    result = {
         "usd_krw_latest": series_metric(
             fx_valid, fx_valid.iloc[-1] if not fx_valid.empty else None, "원"
         ),
         "usd_krw_change": series_metric(fx_valid, fx_change, "%"),
+        "market_index_name": _text_metric(
+            market_names.iloc[-1] if not market_names.empty else None,
+            reason="기업 시장구분 또는 시장지수 데이터 없음",
+        ),
+        "market_index_latest": series_metric(
+            market_index_valid,
+            market_index_valid.iloc[-1] if not market_index_valid.empty else None,
+            "p",
+        ),
+        "market_index_change": series_metric(
+            market_index_valid,
+            market_index_change,
+            "%",
+        ),
         "treasury_3y_latest": series_metric(
             rate_valid,
             rate_valid.iloc[-1] if not rate_valid.empty else None,
@@ -373,23 +544,83 @@ def _macro_kpis(company_macro: pd.DataFrame | None) -> dict[str, dict]:
             digits=3,
         ),
         "treasury_3y_change_bp": series_metric(rate_valid, rate_change_bp, "bp", digits=1),
+        "credit_spread_latest": series_metric(
+            spread_valid,
+            spread_valid.iloc[-1] if not spread_valid.empty else None,
+            "bp",
+            digits=1,
+        ),
+        "credit_spread_change_bp": series_metric(
+            spread_valid,
+            spread_change_bp,
+            "bp",
+            digits=1,
+        ),
         "corr_return_usd_krw": series_metric(
             fx_valid, fx_corr, "", status=fx_corr_status, reason=fx_corr_reason
         ),
         "corr_return_treasury_3y": series_metric(
             rate_valid, rate_corr, "", status=rate_corr_status, reason=rate_corr_reason
         ),
-        "macro_filled_days": _metric(
-            int((fx_filled | rate_filled).sum()), "일", digits=0
+        "corr_return_market_index": series_metric(
+            market_index_valid,
+            market_index_corr,
+            "",
+            status=market_index_corr_status,
+            reason=market_index_corr_reason,
         ),
-        **{
-            name: _outlier_days(data, column, source)
-            for (name, column), source in zip(
-                OUTLIER_KPI_COLUMNS.items(),
-                (data["종가"].dropna(), fx_valid, rate_valid),
-            )
-        },
+        "corr_return_credit_spread": series_metric(
+            spread_valid,
+            spread_corr,
+            "",
+            status=spread_corr_status,
+            reason=spread_corr_reason,
+        ),
+        "corr_usd_krw_treasury_3y_level": paired_series_metric(
+            level_corr,
+            status=level_corr_status,
+            reason=level_corr_reason,
+        ),
+        "corr_usd_krw_treasury_3y_change": paired_series_metric(
+            change_corr,
+            status=change_corr_status,
+            reason=change_corr_reason,
+        ),
+        "macro_filled_days": _metric(
+            int(
+                (
+                    fx_filled
+                    | market_index_filled
+                    | rate_filled
+                    | spread_filled
+                ).sum()
+            ),
+            "일",
+            digits=0,
+        ),
+        "price_outlier_days": _outlier_days(
+            data, PRICE_OUTLIER_COLUMN, data["종가"].dropna()
+        ),
+        "usd_krw_outlier_days": _outlier_days(
+            data, FX_OUTLIER_COLUMN, fx_valid
+        ),
+        "market_index_outlier_days": _outlier_days(
+            data, MARKET_INDEX_OUTLIER_COLUMN, market_index_valid
+        ),
+        "treasury_3y_outlier_days": _outlier_days(
+            data, RATE_OUTLIER_COLUMN, rate_valid
+        ),
+        "credit_spread_outlier_days": _outlier_days(
+            data, CREDIT_SPREAD_OUTLIER_COLUMN, spread_valid
+        ),
     }
+    result["corr_return_usd_krw"]["observations"] = fx_corr_observations
+    result["corr_return_market_index"]["observations"] = (
+        market_index_corr_observations
+    )
+    result["corr_return_treasury_3y"]["observations"] = rate_corr_observations
+    result["corr_return_credit_spread"]["observations"] = spread_corr_observations
+    return result
 
 
 def _outlier_days(data: pd.DataFrame, column: str, source: pd.Series) -> dict[str, Any]:
@@ -443,7 +674,7 @@ def build_kpi_payload(
             }
         )
     return {
-        "schema_version": "1.1",
+        "schema_version": "1.2",
         "generated_on": date.today().isoformat(),
         "companies": companies,
     }

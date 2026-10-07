@@ -85,6 +85,7 @@ SECTION_LISTS = (
 NUMBER_PATTERN = re.compile(r"(?<![A-Za-z])[-+]?\d[\d,]*(?:\.\d+)?")
 FORBIDDEN_RECOMMENDATION_PATTERN = re.compile(
     r"매수(?:해야|하라|를\s*권|를\s*추천)|매도(?:해야|하라|를\s*권|를\s*추천)|"
+    r"인수(?:해야|하라|를\s*권|를\s*추천)|합병(?:해야|하라|을\s*권|을\s*추천)|"
     r"사야\s*한다|팔아야\s*한다|목표\s*주가|우량주|부실주|종목\s*추천"
 )
 
