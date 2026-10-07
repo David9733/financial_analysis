@@ -26,7 +26,7 @@
 |---|---|---|
 | 재무 | 연간 재무제표, 기업 및 업종 정보 | [Open DART](https://opendart.fss.or.kr/) |
 | 주가 | 일별 OHLC, 거래량, 거래대금, 시가총액 | [공공데이터포털](https://www.data.go.kr/) 금융위원회 |
-| 시장 | KOSPI 또는 KOSDAQ 일별 종가 | 공공데이터포털 금융위원회 |
+| 시장 | KOSPI 또는 KOSDAQ 일별 종가 | [공공데이터포털](https://www.data.go.kr/) 금융위원회 |
 | 환율 | 원/달러 매매기준율 | [한국수출입은행](https://www.koreaexim.go.kr/) |
 | 금리 | 국고채 3년, 회사채 3년 AA- | [한국은행 ECOS](https://ecos.bok.or.kr/api/) |
 | 신용 위험 | 회사채 3년 AA- − 국고채 3년 | ECOS 금리로 직접 계산 |
