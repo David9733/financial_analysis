@@ -29,7 +29,7 @@
 | 시장 | KOSPI 또는 KOSDAQ 일별 종가 | [공공데이터포털](https://www.data.go.kr/) 금융위원회 |
 | 환율 | 원/달러 매매기준율 | [한국수출입은행](https://www.koreaexim.go.kr/) |
 | 금리 | 국고채 3년, 회사채 3년 AA- | [한국은행 ECOS](https://ecos.bok.or.kr/api/) |
-| 신용 위험 | 회사채 3년 AA- − 국고채 3년 | [한국은행 ECOS 금리로 직접 계산](https://ecos.bok.or.kr/api/)|
+| 신용 위험 | 회사채 3년 AA- − 국고채 3년 | [한국은행 ECOS ](https://ecos.bok.or.kr/api/) 금리로 직접 계산 |
 
 기업의 `시장구분`이 KOSPI이면 KOSPI, KOSDAQ이면 KOSDAQ 지수를 연결합니다.
 여러 시장의 기업을 함께 분석해도 기업별 기준지수가 섞이지 않습니다.
