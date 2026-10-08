@@ -1,0 +1,269 @@
+{% macro render_kpi_label(row) -%}
+  {% if row.help_text %}
+    {% set label_parts = row.label.rsplit(' ', 1) %}
+    {% if label_parts|length > 1 %}{{ label_parts[0] }} <span class="kpi-label-tail">{{ label_parts[1] }}<span class="kpi-help-badge" aria-hidden="true">{% if row.help_kind == 'warning' %}!{% else %}?{% endif %}</span></span>{% else %}<span class="kpi-label-tail">{{ row.label }}<span class="kpi-help-badge" aria-hidden="true">{% if row.help_kind == 'warning' %}!{% else %}?{% endif %}</span></span>{% endif %}<span class="kpi-help-tooltip" role="tooltip">{{ row.help_text }}</span>
+  {% else %}{{ row.label }}{% endif %}
+{%- endmacro %}
+
+{% macro render_matrix(title, matrix, description='', summary_items=none) -%}
+  {% if matrix.rows %}
+    <section class="comparison-block">
+      <div class="section-heading compact-heading"><h3>{{ title }}</h3>{% if summary_items %}<div class="radar-summary-list" aria-label="매크로 레이더 판정 요약">{% for item in summary_items %}<span class="radar-summary-item"><strong>{{ item.label }}:</strong> {{ item.value }}</span>{% endfor %}</div>{% elif description %}<span>{{ description }}</span>{% endif %}</div>
+      {% if matrix.companies|length == 1 %}
+        <div class="single-kpi-table-wrap">
+          <table class="single-kpi-table">
+            <tbody>
+              {% for row_group in matrix.rows|batch(4, none) %}
+                <tr>{% for row in row_group %}{% if row %}<th class="{% if row.help_text %}kpi-help-item{% if row.help_kind == 'warning' %} kpi-warning-item{% endif %}{% endif %}"{% if row.help_text %} tabindex="0" aria-label="{{ row.label }}. {{ row.help_text }}"{% endif %}>{{ render_kpi_label(row) }}</th><td>{{ row['values'][0] }}</td>{% else %}<th aria-hidden="true"></th><td></td>{% endif %}{% endfor %}</tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="comparison-table-wrap{% if matrix.companies|length == 2 %} is-compact{% endif %}">
+          <table class="comparison-table">
+            <thead><tr><th>지표</th>{% for company in matrix.companies %}<th>{{ company }}</th>{% endfor %}</tr></thead>
+            <tbody>{% for row in matrix.rows %}<tr><th class="{% if row.help_text %}kpi-help-item{% if row.help_kind == 'warning' %} kpi-warning-item{% endif %}{% endif %}"{% if row.help_text %} tabindex="0" aria-label="{{ row.label }}. {{ row.help_text }}"{% endif %}>{{ render_kpi_label(row) }}</th>{% for value in row['values'] %}<td>{{ value }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+          </table>
+        </div>
+      {% endif %}
+    </section>
+  {% endif %}
+{%- endmacro %}
+
+{% macro render_evidence(items, comparison=false) -%}
+  {% if items %}<p class="insight-evidence">근거: {% for item in items %}{% if comparison %}{{ item.company }} {% endif %}{{ item.label }} {{ item.value }}{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+{%- endmacro %}
+
+{% macro render_insight_detail(insight) -%}
+  <section><h4>데이터 기준</h4><p>{{ insight.data_basis }}</p></section>
+  {% for title, section in [('성장성', insight.growth), ('수익성', insight.profitability), ('재무 안정성', insight.stability), ('효율성', insight.efficiency), ('시장 흐름', insight.market)] %}
+    <section><h4>{{ title }}</h4><p>{{ section.summary }}</p>{{ render_evidence(section.evidence) }}</section>
+  {% endfor %}
+  {% for title, items in [('KPI 간 주요 관계 및 불일치', insight.relationships_and_mismatches), ('추가 확인사항', insight.additional_checks)] %}
+    {% if items %}<section><h4>{{ title }}</h4><ul>{% for section in items %}<li>{{ section.summary }}{% if section.evidence %}<span class="insight-evidence"> — {% for item in section.evidence %}{{ item.label }} {{ item.value }}{% if not loop.last %}, {% endif %}{% endfor %}</span>{% endif %}</li>{% endfor %}</ul></section>{% endif %}
+  {% endfor %}
+{%- endmacro %}
+
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>분석 결과, DART 기업 재무분석</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body class="result-page result-page-{{ analysis_mode }}">
+  <main class="results-shell">
+    <header class="result-header dashboard-header">
+      <div>
+        <p class="eyebrow">{% if analysis_mode == 'single' %}COMPANY ANALYSIS{% else %}COMPANY COMPARISON{% endif %}</p>
+        <h1>{{ companies | join(', ') }}</h1>
+        <p>{% if analysis_mode == 'single' %}한 기업의 재무와 시장 데이터를 분석했습니다.{% else %}{{ companies | length }}개 기업을 같은 지표 기준으로 비교합니다.{% endif %}</p>
+      </div>
+      <a class="button" href="{{ url_for('index') }}">새 분석</a>
+    </header>
+
+    {% if warnings %}<section class="warning-list" aria-label="데이터 조회 안내">{% for warning in warnings %}<p>{{ warning }}</p>{% endfor %}</section>{% endif %}
+
+    <section class="overview-section" aria-labelledby="market-overview-title">
+      <div class="section-heading compact-heading"><div><p class="eyebrow">MARKET SNAPSHOT</p><h2 id="market-overview-title">시장 환경</h2></div><span>휴장일에는 가장 최근 거래일 기준입니다.</span></div>
+      {% if market_overview %}
+        <div class="market-overview-grid">
+          {% for group in [market_overview[:2], market_overview[2:]] %}
+            <article class="market-overview-card market-overview-group">
+              {% for item in group %}
+                <div class="market-overview-item{% if not item.available %} is-missing{% endif %}">
+                  <div><strong>{{ item.label }}</strong><span>{{ item.date }}</span></div>
+                  <p>{{ item.value }}</p>
+                  <small>{{ item.change }}</small>
+                </div>
+              {% endfor %}
+            </article>
+          {% endfor %}
+        </div>
+      {% else %}<div class="empty-state compact-empty">조회 가능한 시장 환경 데이터가 없습니다.</div>{% endif %}
+    </section>
+
+    {% if stock_cards %}
+      <section class="overview-section" aria-labelledby="company-snapshot-title">
+        <div class="section-heading compact-heading"><h2 id="company-snapshot-title">기업 스냅샷</h2><span>{{ stock_period_label }} 기준</span></div>
+        <div class="company-snapshot-grid">
+          {% for card in stock_cards %}
+            <article class="company-snapshot-card">
+              <div class="snapshot-heading"><div><strong>{{ card.company }}</strong><span>{{ card.code }}, {{ card.date }}</span></div><span class="market-badge">{% if card.market == '시장 확인 불가' %}{{ card.market }}{% else %}{{ card.market }} 소속{% endif %}</span></div>
+              <dl class="snapshot-market-list"><div><dt>종가</dt><dd>{{ card.close }}</dd></div><div><dt>시가총액</dt><dd>{{ card.market_cap }}</dd></div><div><dt>기간수익률</dt><dd>{{ card.return }}</dd></div></dl>
+              {% if card.headline_kpis %}
+                <div class="snapshot-kpi-section">
+                  <h3>핵심 성과지표</h3>
+                  <dl class="snapshot-kpi-list">{% for metric in card.headline_kpis %}<div><dt>{{ metric.label }}</dt><dd>{{ metric.value }}</dd></div>{% endfor %}</dl>
+                </div>
+              {% endif %}
+            </article>
+          {% endfor %}
+        </div>
+      </section>
+    {% endif %}
+
+    <nav class="result-tabs" role="tablist" aria-label="분석 결과 영역">
+      <button type="button" role="tab" id="tab-financial" aria-controls="panel-financial" aria-selected="false" data-tab="financial">재무</button>
+      <button type="button" role="tab" id="tab-stock" aria-controls="panel-stock" aria-selected="false" data-tab="stock">주가</button>
+      <button type="button" role="tab" id="tab-macro" aria-controls="panel-macro" aria-selected="false" data-tab="macro">매크로</button>
+      <button type="button" role="tab" id="tab-summary" aria-controls="panel-summary" aria-selected="true" data-tab="summary">요약</button>
+    </nav>
+
+    <section id="panel-summary" class="tab-panel" role="tabpanel" aria-labelledby="tab-summary" data-panel="summary">
+      {% if gpt_enabled %}
+      <div class="section-heading insight-heading"><div><p class="eyebrow">GPT INSIGHTS</p><h2>{% if analysis_mode == 'comparison' or gpt_comparisons %}기업 간 차이{% else %}GPT 자동 인사이트{% endif %}</h2></div><span>GPT 자동 인사이트는 계산된 KPI만 해석하며 투자 권유나 미래 주가 예측이 아닙니다.</span></div>
+      {% if gpt_comparisons %}<div class="comparison-insight-grid">{% for comparison in gpt_comparisons %}<article class="panel comparison-insight-card"><p>{{ comparison.summary }}</p>{{ render_evidence(comparison.evidence, true) }}</article>{% endfor %}</div>{% endif %}
+      {% if gpt_insights %}
+        <div class="summary-insight-grid">
+          {% for insight in gpt_insights %}
+            <article class="panel insight-card summary-insight-card">
+              <h3>{{ insight.company }}</h3>
+              <section><h4>한줄 요약</h4><p>{{ insight.one_line_summary.summary }}</p>{{ render_evidence(insight.one_line_summary.evidence) }}</section>
+              <div class="signal-grid">
+                <section><h4>긍정적으로 나타난 데이터</h4><ul>{% for item in insight.positive_signals %}<li>{{ item.summary }}</li>{% else %}<li>확인 가능한 신호가 없습니다.</li>{% endfor %}</ul></section>
+                <section><h4>주의해서 볼 데이터</h4><ul>{% for item in insight.caution_signals %}<li>{{ item.summary }}</li>{% else %}<li>확인 가능한 신호가 없습니다.</li>{% endfor %}</ul></section>
+              </div>
+              <section><h4>종합 분석</h4><p>{{ insight.overall_summary.summary }}</p>{{ render_evidence(insight.overall_summary.evidence) }}</section>
+              <details class="insight-details"><summary>{{ insight.company }} 세부 분석 펼치기</summary><div class="insight-details-body">{{ render_insight_detail(insight) }}</div></details>
+            </article>
+          {% endfor %}
+        </div>
+      {% elif not gpt_comparisons %}<div class="empty-state">GPT 분석을 사용할 수 없어 계산된 KPI만 표시합니다.</div>{% endif %}
+      {% endif %}
+
+      {% set insight_state = namespace(has_items=false) %}
+      {% for group in macro_chart_groups %}{% if group.key == 'correlation' %}{% for chart in group.charts %}{% if chart.insight %}{% set insight_state.has_items = true %}{% endif %}{% endfor %}{% endif %}{% endfor %}
+      {% if insight_state.has_items %}
+        <div class="section-heading summary-data-heading"><div><p class="eyebrow">CORRELATION INSIGHTS</p><h2>상관관계 종합 인사이트</h2></div><span>히트맵에서 계산된 과거 동행성과 매크로 레이더 결과를 별도로 정리했습니다.</span></div>
+        <div class="insight-grid">
+          {% for group in macro_chart_groups %}{% if group.key == 'correlation' %}{% for chart in group.charts %}{% if chart.insight_sections %}<article class="panel insight-summary-card correlation-insight-card"><p class="eyebrow">상관관계</p><h3>{{ chart.company or '전체 기업' }}</h3><section><h4>조회기간 환경</h4><p>{{ chart.insight_sections.environment }}</p></section>{% if chart.insight_sections.evidence %}<section><h4>시장 대비 노출 근거</h4><ul>{% for item in chart.insight_sections.evidence %}<li>{{ item }}</li>{% endfor %}</ul></section>{% endif %}{% if chart.insight_sections.conclusion %}<section class="correlation-conclusion"><h4>핵심 판정</h4><p>{{ chart.insight_sections.conclusion }}</p></section>{% endif %}{% if chart.insight_sections.notice %}<p class="correlation-notice">{{ chart.insight_sections.notice }}</p>{% endif %}</article>{% endif %}{% endfor %}{% endif %}{% endfor %}
+        </div>
+      {% endif %}
+
+      <div class="section-heading summary-data-heading"><div><p class="eyebrow">DETAIL DATA</p><h2>요약 데이터와 다운로드</h2></div><span>분석에 사용한 계산 결과와 원본 표입니다.</span></div>
+      <div class="data-preview-tabs" role="tablist" aria-label="요약 데이터 종류">
+        {% for preview in data_previews %}<button type="button" role="tab" id="preview-tab-{{ preview.key }}" aria-controls="preview-panel-{{ preview.key }}" aria-selected="{{ 'true' if loop.first else 'false' }}" data-preview-tab="{{ preview.key }}">{{ preview.label }}</button>{% endfor %}
+      </div>
+      {% for preview in data_previews %}
+        <section id="preview-panel-{{ preview.key }}" class="panel table-panel data-preview-panel" role="tabpanel" aria-labelledby="preview-tab-{{ preview.key }}" data-preview-panel="{{ preview.key }}"{% if not loop.first %} hidden{% endif %}>
+          <div class="preview-panel-heading"><div><h3>{{ preview.label }}</h3><span>CSV 기준 상위 5행과 모든 열을 표시합니다.</span></div>{% if preview.download_url %}<a class="button secondary preview-download" href="{{ preview.download_url }}" download>CSV 다운로드</a>{% endif %}</div>
+          {% if preview.columns and preview.rows %}<div class="table-wrap"><table><thead><tr>{% for column in preview.columns %}<th>{{ column }}</th>{% endfor %}</tr></thead><tbody>{% for row in preview.rows %}<tr>{% for value in row %}<td>{{ value }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>{% else %}<div class="empty-state compact-empty">표시할 데이터가 없습니다.</div>{% endif %}
+        </section>
+      {% endfor %}
+    </section>
+
+    <section id="panel-financial" class="tab-panel" role="tabpanel" aria-labelledby="tab-financial" data-panel="financial" hidden>
+      <div class="section-heading"><div><p class="eyebrow">FINANCIALS</p><h2>재무 분석</h2></div><span>연간 사업보고서 기준</span></div>
+      {{ render_matrix('전체 재무 KPI 비교', financial_kpi_matrix, '모든 계산 결과를 같은 지표 기준으로 확인합니다.') }}
+      {% if chart_urls %}<div class="chart-grid result-chart-grid">{% for chart_url in chart_urls %}<article class="chart-card"><img src="{{ chart_url }}" alt="재무분석 차트 {{ loop.index }}" loading="lazy"></article>{% endfor %}</div>{% endif %}
+    </section>
+
+    <section id="panel-stock" class="tab-panel" role="tabpanel" aria-labelledby="tab-stock" data-panel="stock" hidden>
+      <div class="section-heading"><div><p class="eyebrow">STOCK</p><h2>주식시장 분석</h2></div><span>{{ stock_period_label }}, 최신 거래일 기준</span></div>
+      {% if stock_cards %}
+        {{ render_matrix('주가 KPI 비교', market_kpi_matrix) }}
+        {% if stock_comparison_charts %}<div class="featured-chart-grid">{% for chart in stock_comparison_charts %}<article class="chart-card featured-chart"><img src="{{ chart.url }}" alt="기업별 주가 성과 비교" loading="lazy"></article>{% endfor %}</div>{% endif %}
+        {% if stock_price_chart_groups %}
+          <div class="section-heading compact-heading stock-chart-heading"><h3>주가 상세 그래프</h3><span>주가, 거래량과 투자자 그래프를 한눈에 확인합니다.</span></div>
+          {% set stock_layout = namespace(has_investor=false) %}{% for group in stock_price_chart_groups %}{% if group.key == 'investor' and group.charts %}{% set stock_layout.has_investor = true %}{% endif %}{% endfor %}
+          <div class="stock-chart-layout{% if not stock_layout.has_investor %} no-investor{% endif %}">
+            <div class="stock-primary-charts">
+              {% for group in stock_price_chart_groups %}{% if group.key != 'investor' %}{% for chart in group.charts %}<article class="chart-card">{% if chart.company %}<h4 class="chart-company-name">{{ chart.company }}, {{ group.label }}</h4>{% else %}<h4 class="chart-company-name">{{ group.label }}</h4>{% endif %}<img src="{{ chart.url }}" alt="{{ chart.company or '' }} {{ group.label }} 차트" loading="lazy">{% if chart.insight %}<div class="chart-insight"><h3>종합 인사이트</h3><p>{{ chart.insight }}</p></div>{% endif %}</article>{% endfor %}{% endif %}{% endfor %}
+            </div>
+            <div class="stock-investor-charts">
+              {% for group in stock_price_chart_groups %}{% if group.key == 'investor' %}{% for chart in group.charts %}<article class="chart-card">{% if chart.company %}<h4 class="chart-company-name">{{ chart.company }}, {{ group.label }}</h4>{% else %}<h4 class="chart-company-name">{{ group.label }}</h4>{% endif %}<img src="{{ chart.url }}" alt="{{ chart.company or '' }} {{ group.label }} 차트" loading="lazy">{% if chart.insight %}<div class="chart-insight"><h3>종합 인사이트</h3><p>{{ chart.insight }}</p></div>{% endif %}</article>{% endfor %}{% endif %}{% endfor %}
+            </div>
+          </div>
+        {% endif %}
+      {% else %}<div class="empty-state">조회 가능한 주식시장 데이터가 없어 재무분석만 표시합니다.</div>{% endif %}
+    </section>
+
+    <section id="panel-macro" class="tab-panel" role="tabpanel" aria-labelledby="tab-macro" data-panel="macro" hidden>
+      <div class="section-heading"><div><p class="eyebrow">MACRO</p><h2>매크로 분석</h2></div><span>시장지수, 환율, 금리와 신용 스프레드 기준</span></div>
+      {{ render_matrix('시장 및 외부 요인 (KOSPI/KOSDAQ, 환율, 금리, 신용 스프레드)', macro_kpi_matrix, '시장지수와 외부 요인의 최신값, 기간 변화 및 이상치를 기업별로 비교합니다.') }}
+      {{ render_matrix('매크로 레이더', macro_radar_matrix, '', macro_radar_summaries) }}
+      {% if macro_chart_groups %}
+        <div class="chart-filter" role="tablist" aria-label="매크로 차트 종류">{% for group in macro_chart_groups %}<button type="button" role="tab" id="chart-tab-{{ group.key }}" aria-controls="chart-group-{{ group.key }}" aria-selected="{{ 'true' if loop.first else 'false' }}" data-chart-filter="{{ group.key }}">{{ group.label }}</button>{% endfor %}</div>
+        {% for group in macro_chart_groups %}
+          <section id="chart-group-{{ group.key }}" class="chart-group" role="tabpanel" aria-labelledby="chart-tab-{{ group.key }}" data-chart-group="{{ group.key }}"{% if not loop.first %} hidden{% endif %}>
+            <div class="section-heading compact-heading"><h3>{{ group.label }}</h3><span>같은 종류의 차트를 기업별로 비교합니다.</span></div>
+            <div class="chart-grid company-chart-grid">{% for chart in group.charts %}<article class="chart-card">{% if chart.company %}<h4 class="chart-company-name">{{ chart.company }}</h4>{% endif %}<img src="{{ chart.url }}" alt="{{ chart.company or '' }} {{ group.label }} 차트" loading="lazy"></article>{% endfor %}</div>
+          </section>
+        {% endfor %}
+      {% endif %}
+    </section>
+  </main>
+
+  <script>
+    const resultTabs = [...document.querySelectorAll('[data-tab]')];
+    const resultPanels = [...document.querySelectorAll('[data-panel]')];
+    function activateResultTab(name, updateHash = true) {
+      const selected = resultTabs.some((tab) => tab.dataset.tab === name) ? name : 'summary';
+      resultTabs.forEach((tab) => { const active = tab.dataset.tab === selected; tab.setAttribute('aria-selected', String(active)); tab.tabIndex = active ? 0 : -1; });
+      resultPanels.forEach((panel) => { panel.hidden = panel.dataset.panel !== selected; });
+      if (updateHash) history.replaceState(null, '', `#${selected}`);
+    }
+    resultTabs.forEach((tab, index) => {
+      tab.addEventListener('click', () => activateResultTab(tab.dataset.tab));
+      tab.addEventListener('keydown', (event) => {
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault();
+        let next = event.key === 'Home' ? 0 : event.key === 'End' ? resultTabs.length - 1 : index + (event.key === 'ArrowRight' ? 1 : -1);
+        next = (next + resultTabs.length) % resultTabs.length;
+        resultTabs[next].focus(); activateResultTab(resultTabs[next].dataset.tab);
+      });
+    });
+    activateResultTab(window.location.hash.slice(1), false);
+    const chartFilters = [...document.querySelectorAll('[data-chart-filter]')];
+    function getChartControls(button) {
+      const panel = button.closest('.tab-panel');
+      return {
+        filters: [...panel.querySelectorAll('[data-chart-filter]')],
+        groups: [...panel.querySelectorAll('[data-chart-group]')],
+      };
+    }
+    function activateChartGroup(button) {
+      const { filters, groups } = getChartControls(button);
+      filters.forEach((item) => item.setAttribute('aria-selected', String(item === button)));
+      groups.forEach((group) => { group.hidden = group.dataset.chartGroup !== button.dataset.chartFilter; });
+    }
+    chartFilters.forEach((button) => {
+      button.addEventListener('click', () => activateChartGroup(button));
+      button.addEventListener('keydown', (event) => {
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault();
+        const { filters } = getChartControls(button);
+        const index = filters.indexOf(button);
+        let next = event.key === 'Home' ? 0 : event.key === 'End' ? filters.length - 1 : index + (event.key === 'ArrowRight' ? 1 : -1);
+        next = (next + filters.length) % filters.length;
+        filters[next].focus(); activateChartGroup(filters[next]);
+      });
+    });
+
+    const previewTabs = [...document.querySelectorAll('[data-preview-tab]')];
+    const previewPanels = [...document.querySelectorAll('[data-preview-panel]')];
+    function activatePreviewTab(button) {
+      previewTabs.forEach((item) => {
+        const active = item === button;
+        item.setAttribute('aria-selected', String(active));
+        item.tabIndex = active ? 0 : -1;
+      });
+      previewPanels.forEach((panel) => { panel.hidden = panel.dataset.previewPanel !== button.dataset.previewTab; });
+    }
+    previewTabs.forEach((button, index) => {
+      button.addEventListener('click', () => activatePreviewTab(button));
+      button.addEventListener('keydown', (event) => {
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault();
+        let next = event.key === 'Home' ? 0 : event.key === 'End' ? previewTabs.length - 1 : index + (event.key === 'ArrowRight' ? 1 : -1);
+        next = (next + previewTabs.length) % previewTabs.length;
+        previewTabs[next].focus(); activatePreviewTab(previewTabs[next]);
+      });
+    });
+
+  </script>
+</body>
+</html>

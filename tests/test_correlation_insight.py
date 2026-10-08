@@ -84,7 +84,7 @@ class CorrelationInsightTests(unittest.TestCase):
         self.assertIn("매크로 레이더", insight)
         self.assertIn("환율은 기업 r=+0.40, KOSPI r=+0.05, 시장 대비 +0.35", insight)
         self.assertIn(
-            "60거래일 이동상관의 부호 유지율 88.0%·전환 1회·전환율 2.0%로 안정적",
+            "60거래일 이동상관의 부호 유지율 88.0%, 전환 1회, 전환율 2.0%로 안정적",
             insight,
         )
         self.assertIn("구조적 노출 후보", insight)
@@ -127,7 +127,7 @@ class CorrelationInsightTests(unittest.TestCase):
             with self.subTest(fx=fx, rate=rate):
                 insight = build_correlation_insight(macro(fx, rate))
                 self.assertIn(expected, insight)
-                self.assertIn("금리 상승(+16.1bp)·원화 약세(환율 +2.4%)", insight)
+                self.assertIn("금리 상승(+16.1bp), 원화 약세(환율 +2.4%)", insight)
                 self.assertIn(f"주가–환율 r={fx:+.2f}(중간)", insight)
                 self.assertIn(f"주가–금리 r={rate:+.2f}(중간)", insight)
 
@@ -153,8 +153,8 @@ class CorrelationInsightTests(unittest.TestCase):
         insight = build_correlation_insight(full_macro())
 
         self.assertIn(
-            "KOSPI 상승(+3.2%)·금리 상승(+16.1bp)·원화 약세(환율 +2.4%)"
-            "·신용 스프레드 확대(+8bp)",
+            "KOSPI 상승(+3.2%), 금리 상승(+16.1bp), 원화 약세(환율 +2.4%)"
+            ", 신용 스프레드 확대(+8bp)",
             insight,
         )
         self.assertIn(
@@ -163,7 +163,7 @@ class CorrelationInsightTests(unittest.TestCase):
             insight,
         )
         self.assertIn(
-            "강한 신호: 시장지수 상승 방향·신용 스프레드 하락 방향", insight
+            "강한 신호: 시장지수 상승 방향, 신용 스프레드 하락 방향", insight
         )
         self.assertIn("주가–시장지수 r=+0.75(강함)", insight)
         self.assertIn("주가–신용 스프레드 r=-0.80(강함)", insight)
@@ -187,7 +187,7 @@ class CorrelationInsightTests(unittest.TestCase):
 
         self.assertIn("원화 약세", rising)
         self.assertIn("모두 과거 주가 상승 방향", rising)
-        self.assertIn("금리 하락(-8bp)·원화 강세(환율 -1.2%)", falling)
+        self.assertIn("금리 하락(-8bp), 원화 강세(환율 -1.2%)", falling)
         self.assertIn("모두 과거 주가 하락 방향", falling)
 
     def test_missing_or_unavailable_correlation_defers_judgment(self):

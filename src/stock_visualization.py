@@ -9,6 +9,7 @@ import matplotlib
 matplotlib.use("Agg")
 
 import matplotlib.dates as mdates
+import matplotlib.patheffects as path_effects
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
@@ -87,20 +88,37 @@ def _finish_date_axis(ax) -> None:
     ax.grid(axis="y", alpha=0.25)
 
 
+def volume_direction_counts(data: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
+    """시가와 종가를 비교해 매수 우세일과 매도 우세일 마스크를 만든다."""
+    opening = pd.to_numeric(data["시가"], errors="coerce")
+    closing = pd.to_numeric(data["종가"], errors="coerce")
+    valid = opening.notna() & closing.notna()
+    return valid & (closing >= opening), valid & (closing < opening)
+
+
 def _create_volume_chart(data: pd.DataFrame, company: str, output_path: Path) -> None:
     """시가 대비 종가 방향을 매수·매도 우세의 시각적 대용치로 표시한다."""
-    colors = data.apply(
-        lambda row: "#E53935"
-        if pd.notna(row["시가"]) and row["종가"] >= row["시가"]
-        else "#1E6BD6",
-        axis=1,
+    buy_dominant, sell_dominant = volume_direction_counts(data)
+    colors = np.select(
+        [buy_dominant, sell_dominant],
+        ["#E53935", "#1E6BD6"],
+        default="#94A3B8",
     )
     fig, ax = plt.subplots(figsize=(10, 4.5))
     ax.bar(data["기준일"], data["거래량"], color=colors, width=1)
     ax.set_title(f"{company} 거래량 추이")
     ax.set_ylabel("주")
-    ax.plot([], [], color="#E53935", linewidth=7, label="매수 우세 (종가 ≥ 시가)")
-    ax.plot([], [], color="#1E6BD6", linewidth=7, label="매도 우세 (종가 < 시가)")
+    max_volume = pd.to_numeric(data["거래량"], errors="coerce").max()
+    if pd.notna(max_volume) and max_volume > 0:
+        ax.set_ylim(0, max_volume * 1.3)
+    ax.plot(
+        [], [], color="#E53935", linewidth=7,
+        label=f"매수 우세 (종가 ≥ 시가) {int(buy_dominant.sum())}개",
+    )
+    ax.plot(
+        [], [], color="#1E6BD6", linewidth=7,
+        label=f"매도 우세 (종가 < 시가) {int(sell_dominant.sum())}개",
+    )
     ax.legend(loc="upper left", frameon=False, fontsize=9)
     _finish_date_axis(ax)
     fig.tight_layout()
@@ -144,17 +162,20 @@ def _create_monthly_volume_chart(data: pd.DataFrame, company: str, output_path: 
         linewidth=1,
         label="그달 최대 하루 거래량",
     )
-    # 거래일 수는 막대 아래쪽 안에 적어 최대 거래량 점과 겹치지 않게 한다.
+    # 거래일 수는 막대 중앙에 큰 흰색 글씨로 표시해 차트 축과 겹치지 않게 한다.
     for bar, days in zip(bars, monthly["거래일수"]):
         ax.annotate(
             f"{int(days)}일",
-            (bar.get_x() + bar.get_width() / 2, 0),
-            xytext=(0, 3),
-            textcoords="offset points",
+            (bar.get_x() + bar.get_width() / 2, bar.get_height() / 2),
             ha="center",
-            va="bottom",
-            fontsize=7,
-            color="#1E3A8A",
+            va="center",
+            rotation=90,
+            fontsize=10,
+            fontweight="bold",
+            color="white",
+            path_effects=[
+                path_effects.withStroke(linewidth=2, foreground="#4F6F9F")
+            ],
         )
     ax.set_title(f"{company} 월별 거래량 (막대 안 숫자: 거래일 수)")
     ax.set_ylabel("주")
@@ -220,7 +241,7 @@ def _create_price_chart(data: pd.DataFrame, company: str, output_path: Path) -> 
             color="#5EEAD4",
             alpha=0.12,
         )
-    ax.set_title(f"{company} 종가·이동평균선·볼린저 밴드")
+    ax.set_title(f"{company} 종가, 이동평균선 및 볼린저 밴드")
     ax.set_ylabel("원")
     ax.legend(loc="best", frameon=False)
     _finish_date_axis(ax)
@@ -229,8 +250,14 @@ def _create_price_chart(data: pd.DataFrame, company: str, output_path: Path) -> 
     plt.close(fig)
 
 
-def _create_investor_pie(data: pd.DataFrame, company: str, output_path: Path) -> None:
-    values = pd.to_numeric(data["매수거래량"], errors="coerce").fillna(0).clip(lower=0)
+def _create_investor_pie(
+    data: pd.DataFrame,
+    company: str,
+    output_path: Path,
+    volume_column: str = "매수거래량",
+    trade_side: str = "매수",
+) -> None:
+    values = pd.to_numeric(data[volume_column], errors="coerce").fillna(0).clip(lower=0)
     if values.sum() <= 0:
         return
     fig, ax = plt.subplots(figsize=(7, 5.5))
@@ -242,7 +269,7 @@ def _create_investor_pie(data: pd.DataFrame, company: str, output_path: Path) ->
         colors=["#7656C9", "#20B486", "#E53935", "#94A3B8"],
         wedgeprops={"edgecolor": "white", "linewidth": 1.5},
     )
-    ax.set_title(f"{company} 최근 투자자별 매수 거래량 비중")
+    ax.set_title(f"{company} 최근 투자자별 {trade_side} 거래량 비중")
     fig.tight_layout()
     fig.savefig(output_path, dpi=160, bbox_inches="tight")
     plt.close(fig)
@@ -612,12 +639,12 @@ def _build_market_correlation_heatmap_figure(
     image = ax.imshow(visible_correlation, cmap=color_map, vmin=-1, vmax=1)
     ax.set_xticks(range(len(columns)), columns, rotation=15, ha="right")
     ax.set_yticks(range(len(columns)), columns)
-    title_factors = "·".join(
+    title_factors = ", ".join(
         column.replace("(%)", "").replace("(bp)", "") for column in columns
     )
     ax.set_title(
         f"{company} {title_factors} 상관관계 히트맵\n"
-        f"Pearson 상관계수 · 유효 관측 {len(changes)}일"
+        f"Pearson 상관계수, 유효 관측 {len(changes)}일"
     )
 
     for row in range(len(columns)):
@@ -808,7 +835,7 @@ def _build_rolling_correlation_figure(
 
     axes[-1].set_xlabel("날짜")
     fig.suptitle(
-        f"{company} {period_label} 조회 · {window}거래일 이동상관\n"
+        f"{company} {period_label} 조회, {window}거래일 이동상관\n"
         f"최근 {window}거래일 중 유효 관측 {min_observations}일 이상",
         fontsize=14,
     )
@@ -872,6 +899,13 @@ def create_stock_visualizations(
                 company,
                 charts_dir / "stock_investor_ratio.png",
             )
+            _create_investor_pie(
+                investor_summary,
+                company,
+                charts_dir / "stock_investor_sell_ratio.png",
+                volume_column="매도거래량",
+                trade_side="매도",
+            )
         return
 
     comparison = normalize_for_comparison(prices)
@@ -910,4 +944,11 @@ def create_stock_visualizations(
                     investor_data,
                     company,
                     charts_dir / f"stock_investor_ratio_{code}.png",
+                )
+                _create_investor_pie(
+                    investor_data,
+                    company,
+                    charts_dir / f"stock_investor_sell_ratio_{code}.png",
+                    volume_column="매도거래량",
+                    trade_side="매도",
                 )

@@ -20,7 +20,7 @@ ANALYSIS_SYSTEM_PROMPT = """# 정체성과 목적
 - 기준일을 알 수 없거나 최신 데이터가 과거 데이터라면 임의로 "현재"라고
   표현하지 마십시오.
 - status가 available인 값만 사실 근거로 사용하십시오. missing, not_applicable,
-  no_comparison_period인 값은 추정하거나 보완하지 마십시오.
+  no_comparison_period, neutral_direction인 값은 추정하거나 보완하지 마십시오.
 
 # 절대 규칙
 

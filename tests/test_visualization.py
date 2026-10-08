@@ -27,6 +27,7 @@ from src.stock_visualization import (
     create_fx_rate_scatter_visualizations,
     create_market_correlation_heatmaps,
     monthly_volume_summary,
+    volume_direction_counts,
 )
 from src.visualization import _line_chart, create_single_company_charts
 
@@ -127,6 +128,16 @@ class MonthlyVolumeTests(unittest.TestCase):
         self.assertEqual(summary["월평균거래량"].tolist(), [200.0, 500.0])
         self.assertEqual(summary["최대일거래량"].tolist(), [300, 500])
         self.assertEqual(summary["거래일수"].tolist(), [2, 1])
+
+    def test_volume_direction_counts_compare_close_with_open(self) -> None:
+        data = pd.DataFrame(
+            {"시가": [100, 100, 100, None], "종가": [101, 100, 99, 90]}
+        )
+
+        buy_dominant, sell_dominant = volume_direction_counts(data)
+
+        self.assertEqual(int(buy_dominant.sum()), 2)
+        self.assertEqual(int(sell_dominant.sum()), 1)
 
     def test_chart_only_for_six_months_or_more(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -256,7 +267,7 @@ class MarketCorrelationHeatmapTests(unittest.TestCase):
         self.assertTrue(correlation.equals(correlation.T))
         self.assertGreaterEqual(observations, 10)
         self.assertIn(
-            "주가 수익률·시장지수 수익률·환율 변화율·금리 변화폭·신용 스프레드 변화폭 상관관계 히트맵",
+            "주가 수익률, 시장지수 수익률, 환율 변화율, 금리 변화폭, 신용 스프레드 변화폭 상관관계 히트맵",
             axis.get_title(),
         )
         self.assertEqual(axis.images[0].get_clim(), (-1.0, 1.0))
@@ -345,7 +356,7 @@ class RollingCorrelationVisualizationTests(unittest.TestCase):
                 title = figure._suptitle.get_text()
                 self.assertEqual(len(figure.axes), 4)
                 self.assertNotIn("환율 변화율-금리 변화폭", rolling.columns)
-                self.assertIn(f"{label} 조회 · {window}거래일 이동상관", title)
+                self.assertIn(f"{label} 조회, {window}거래일 이동상관", title)
                 self.assertIn(f"유효 관측 {minimum}일 이상", title)
                 self.assertTrue(
                     all(axis.get_ylim() == (-1.05, 1.05) for axis in figure.axes)

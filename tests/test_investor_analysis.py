@@ -23,6 +23,7 @@ class InvestorAnalysisTests(unittest.TestCase):
         self.assertEqual(result["투자자구분"].tolist(), ["기관", "개인", "외국인", "기타"])
         self.assertEqual(result["매수거래량"].tolist(), [20.0, 30.0, 40.0, 10.0])
         self.assertAlmostEqual(result["매수비중"].sum(), 100.0)
+        self.assertAlmostEqual(result["매도비중"].sum(), 100.0)
 
 
 if __name__ == "__main__":

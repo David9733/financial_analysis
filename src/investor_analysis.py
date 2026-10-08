@@ -19,6 +19,7 @@ INVESTOR_COLUMNS = [
     "매수거래량",
     "순매수거래량",
     "매수비중",
+    "매도비중",
 ]
 
 INSTITUTION_LABELS = {
@@ -85,18 +86,21 @@ def summarize_investor_trading(
         "기타": totals({"기타법인", "기타외국인"}),
     }
     total_buys = sum(max(float(values["매수거래량"]), 0) for values in grouped.values())
+    total_sells = sum(max(float(values["매도거래량"]), 0) for values in grouped.values())
     rows = []
     for label, values in grouped.items():
         buy_volume = float(values["매수거래량"])
+        sell_volume = float(values["매도거래량"])
         rows.append(
             {
                 "기업명": company_name,
                 "종목코드": stock_code,
                 "투자자구분": label,
-                "매도거래량": float(values["매도거래량"]),
+                "매도거래량": sell_volume,
                 "매수거래량": buy_volume,
                 "순매수거래량": float(values["순매수거래량"]),
                 "매수비중": buy_volume / total_buys * 100 if total_buys else 0.0,
+                "매도비중": sell_volume / total_sells * 100 if total_sells else 0.0,
             }
         )
     return pd.DataFrame(rows, columns=INVESTOR_COLUMNS)
@@ -157,6 +161,7 @@ def get_investor_trading(
     grouped["기타"] = (max(total_volume - known_buys, 0), max(total_volume - known_sells, 0))
 
     total_buys = sum(values[0] for values in grouped.values())
+    total_sells = sum(values[1] for values in grouped.values())
     rows = [
         {
             "기업명": company_name,
@@ -166,6 +171,7 @@ def get_investor_trading(
             "매수거래량": buy_volume,
             "순매수거래량": buy_volume - sell_volume,
             "매수비중": buy_volume / total_buys * 100 if total_buys else 0.0,
+            "매도비중": sell_volume / total_sells * 100 if total_sells else 0.0,
         }
         for label, (buy_volume, sell_volume) in grouped.items()
     ]

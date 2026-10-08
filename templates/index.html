@@ -65,7 +65,7 @@
       <p id="progress-message">분석을 준비하고 있습니다.</p>
       <ol class="progress-steps">
         <li data-stage="financial">DART 재무제표</li>
-        <li data-stage="market">주가·투자자 동향</li>
+        <li data-stage="market">주가와 투자자 동향</li>
         <li data-stage="macro">환율과 금리</li>
         <li data-stage="gpt">GPT 자동 인사이트</li>
         <li data-stage="finalizing">결과 정리</li>
@@ -144,7 +144,7 @@
     form.addEventListener('submit', async (event) => {
       const button = form.querySelector('.submit-button');
       button.disabled = true;
-      button.innerHTML = '재무·주가 데이터 분석 중…';
+      button.innerHTML = '재무 및 주가 데이터 분석 중…';
       if (!window.fetch || !window.crypto?.getRandomValues) return;
 
       event.preventDefault();

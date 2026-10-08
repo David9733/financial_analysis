@@ -95,7 +95,15 @@ def _bar_chart(
             )
             if len(data) * len(available_columns) <= 20:
                 labels = ["" if pd.isna(value) else _format_chart_value(value) for value in values]
-                ax.bar_label(bars, labels=labels, padding=3, fontsize=8)
+                ax.bar_label(
+                    bars,
+                    labels=labels,
+                    label_type="edge",
+                    padding=3,
+                    color="#191F28",
+                    fontsize=11,
+                    fontweight="bold",
+                )
     else:
         ax.text(
             0.5,
@@ -108,6 +116,7 @@ def _bar_chart(
 
     ax.set_xticks(x, data["연도"])
     ax.axhline(0, color="#64748B", linewidth=0.8)
+    ax.margins(y=0.12)
     _finish_axis(ax, title, ylabel)
     if single_year_note:
         ax.text(

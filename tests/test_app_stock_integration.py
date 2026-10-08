@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import unittest
 import tempfile
+from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
 
 import pandas as pd
 
-from src.app import KPI_HELP_TEXT, app, build_stock_chart_items
+from src.app import KPI_HELP_TEXT, app, build_stock_chart_items, format_kpi_metric
 from src.financial_analysis import FINAL_COLUMNS
 from src.main import IntegratedAnalysisResult
 from src.stock_analysis import STOCK_PRICE_COLUMNS, STOCK_SUMMARY_COLUMNS
@@ -17,6 +18,33 @@ class AppStockIntegrationTests(unittest.TestCase):
     def setUp(self):
         app.config.update(TESTING=True)
         self.client = app.test_client()
+
+    def test_neutral_direction_kpi_has_distinct_display_label(self):
+        self.assertEqual(
+            format_kpi_metric(
+                {
+                    "value": None,
+                    "unit": "%",
+                    "status": "neutral_direction",
+                    "reason": "기준 방향 없음",
+                }
+            ),
+            "방향성 없음",
+        )
+
+    def test_kpi_metric_honors_display_precision(self):
+        self.assertEqual(
+            format_kpi_metric(
+                {
+                    "value": 0.018,
+                    "unit": "",
+                    "status": "available",
+                    "reason": None,
+                    "display_digits": 3,
+                }
+            ),
+            "0.018",
+        )
 
     @staticmethod
     def fake_result() -> IntegratedAnalysisResult:
@@ -101,28 +129,30 @@ class AppStockIntegrationTests(unittest.TestCase):
             "/analyze",
             data={"company": "삼성전자", "number_of_years": "5", "stock_period": "1y"},
         )
+        html = response.get_data(as_text=True)
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn("주식시장 분석", response.get_data(as_text=True))
+        self.assertIn("주식시장 분석", html)
+        self.assertIn('class="single-kpi-table"', html)
+        self.assertNotIn("<th>지표</th><th>삼성전자</th>", html)
         self.assertIn("재무 분석", response.get_data(as_text=True))
         self.assertIn("핵심 성과지표", response.get_data(as_text=True))
-        self.assertIn("GPT 자동 인사이트", response.get_data(as_text=True))
+        self.assertEqual(response.get_data(as_text=True).count("data-preview-tab="), 6)
+        self.assertIn("주가, 시장지수 및 외부요인 요약", response.get_data(as_text=True))
+        self.assertNotIn("GPT 자동 인사이트", response.get_data(as_text=True))
         self.assertNotIn("환율·금리 시나리오 인사이트", response.get_data(as_text=True))
         self.assertNotIn("재무 완충력 판정", response.get_data(as_text=True))
-        self.assertIn("성장성 요약", response.get_data(as_text=True))
-        self.assertIn("한줄 핵심 요약", response.get_data(as_text=True))
-        self.assertIn("효율성 요약", response.get_data(as_text=True))
-        self.assertIn("KPI 관계 요약", response.get_data(as_text=True))
-        self.assertIn("종합 분석 요약", response.get_data(as_text=True))
-        self.assertIn("ROE 10.2%", response.get_data(as_text=True))
-        self.assertIn("기업 간 차이", response.get_data(as_text=True))
-        self.assertIn("기업별 KPI 차이 요약", response.get_data(as_text=True))
-        self.assertIn("전년·당년 평균자본", response.get_data(as_text=True))
+        self.assertNotIn("성장성 요약", response.get_data(as_text=True))
+        self.assertNotIn("한줄 핵심 요약", response.get_data(as_text=True))
+        self.assertNotIn("효율성 요약", response.get_data(as_text=True))
+        self.assertNotIn("KPI 관계 요약", response.get_data(as_text=True))
+        self.assertNotIn("종합 분석 요약", response.get_data(as_text=True))
+        self.assertIn("<dt>ROE</dt><dd>10.2%</dd>", html)
+        self.assertNotIn("기업 간 차이", response.get_data(as_text=True))
+        self.assertNotIn("기업별 KPI 차이 요약", response.get_data(as_text=True))
+        self.assertIn("전년과 당년 평균자본", response.get_data(as_text=True))
         self.assertIn("마지막 종가 ÷ 첫 종가", response.get_data(as_text=True))
         self.assertIn("kpi-help-item", response.get_data(as_text=True))
-        self.assertIn(
-            "선택기간 과거 동행성을 설명", response.get_data(as_text=True)
-        )
         self.assertNotIn("외부 요인 (환율, 금리)", response.get_data(as_text=True))
         run_analysis.assert_called_once()
 
@@ -145,18 +175,20 @@ class AppStockIntegrationTests(unittest.TestCase):
             "recent_volume_change",
             "price_to_ma20",
             "bollinger_position",
-            "market_index_name",
-            "market_index_latest",
             "market_index_change",
             "corr_return_market_index",
-            "market_index_outlier_days",
             "credit_spread_latest",
             "credit_spread_change_bp",
             "corr_return_credit_spread",
+            "radar_usd_krw_sign_persistence",
+            "radar_usd_krw_sign_switches",
         }
 
         self.assertTrue(requested.issubset(KPI_HELP_TEXT))
         self.assertTrue(all(KPI_HELP_TEXT[name] for name in requested))
+        self.assertNotIn("market_index_name", KPI_HELP_TEXT)
+        self.assertNotIn("market_index_latest", KPI_HELP_TEXT)
+        self.assertNotIn("market_index_outlier_days", KPI_HELP_TEXT)
 
     def test_heatmap_insight_is_matched_by_company_code_only(self):
         payload = {
@@ -242,8 +274,12 @@ class AppStockIntegrationTests(unittest.TestCase):
 
         html = response.get_data(as_text=True)
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(html.count("<h3>종합 인사이트</h3>"), 1)
-        self.assertIn("금리 상승(+16.1bp)·원화 약세(환율 +2.4%)", html)
+        self.assertNotIn("<h3>종합 인사이트</h3>", html)
+        self.assertIn("상관관계 종합 인사이트", html)
+        self.assertIn("핵심 판정", html)
+        self.assertNotIn("상관관계 판정 기준", html)
+        self.assertNotIn("data-show-correlation-criteria", html)
+        self.assertIn("금리 상승(+16.1bp), 원화 약세(환율 +2.4%)", html)
         self.assertIn("주가 하락 방향", html)
         self.assertIn("주가–환율 r=-0.48(중간)", html)
         self.assertIn("주가–금리 r=-0.36(중간)", html)
@@ -342,6 +378,43 @@ class AppStockIntegrationTests(unittest.TestCase):
                 "status": "available",
                 "reason": None,
             },
+            "radar_usd_krw_market_corr": {
+                "value": 0.41,
+                "unit": "",
+                "status": "available",
+                "reason": None,
+            },
+            "radar_treasury_3y_market_corr": {
+                "value": -0.22,
+                "unit": "",
+                "status": "available",
+                "reason": None,
+            },
+            "radar_credit_spread_market_corr": {
+                "value": 0.17,
+                "unit": "",
+                "status": "available",
+                "reason": None,
+            },
+            "radar_usd_krw_excess_corr": {
+                "value": 0.017,
+                "unit": "",
+                "status": "available",
+                "reason": None,
+                "display_digits": 3,
+            },
+            "radar_usd_krw_sign_persistence": {
+                "value": None,
+                "unit": "%",
+                "status": "neutral_direction",
+                "reason": "기준 방향 없음",
+            },
+            "radar_usd_krw_judgement": {
+                "value": "노출 약 × 안정성 판정 불가 (기준 방향 없음)",
+                "unit": "",
+                "status": "available",
+                "reason": None,
+            },
         }
         run_analysis.return_value = result
 
@@ -353,23 +426,35 @@ class AppStockIntegrationTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("시장 및 외부 요인 (KOSPI/KOSDAQ, 환율, 금리, 신용 스프레드)", html)
+        self.assertIn("매크로 레이더", html)
+        self.assertIn("환율 시장 대비 상관 차이", html)
+        self.assertIn("환율 이동상관 부호 유지율", html)
+        self.assertIn(
+            'class="kpi-label-tail">유지율<span class="kpi-help-badge"',
+            html,
+        )
+        self.assertIn("노출 약 + 안정성 판정 불가 (기준 방향 없음)", html)
         self.assertIn("비교 시장지수", html)
         self.assertIn("KOSPI", html)
-        self.assertIn("주가 수익률-시장지수 수익률 상관계수", html)
+        self.assertNotIn("주가 수익률-시장지수 수익률 상관계수", html)
         self.assertIn("1,358원", html)
-        self.assertIn("주가 수익률-환율 변화율 상관계수", html)
-        self.assertIn("주가 수익률-금리 변화폭 상관계수", html)
-        self.assertIn("주가 수익률-신용 스프레드 변화폭 상관계수", html)
+        self.assertNotIn("주가 수익률-환율 변화율 상관계수", html)
+        self.assertNotIn("주가 수익률-금리 변화폭 상관계수", html)
+        self.assertNotIn("주가 수익률-신용 스프레드 변화폭 상관계수", html)
+        self.assertNotIn("시장지수 수익률-환율 변화율 상관계수", html)
+        self.assertNotIn("시장지수 수익률-금리 변화폭 상관계수", html)
+        self.assertNotIn("시장지수 수익률-신용 스프레드 상관계수", html)
         self.assertIn("신용 스프레드(최근)", html)
         self.assertIn("+16.1bp (+0.161%p)", html)
-        self.assertIn("환율값-금리값 상관계수", html)
-        self.assertIn("환율 변화율-금리 변화폭 상관계수", html)
-        self.assertIn("0.72", html)
-        self.assertIn("-0.35", html)
-        self.assertIn("kpi-warning-item", html)
-        self.assertIn("공통 추세만으로도 높게 나타날 수 있습니다", html)
-        self.assertIn("직전 값(첫 구간은 다음 값)으로", html)
-        self.assertIn("보간된 구간은 상관계수와 이상치 계산에서 제외됩니다", html)
+        self.assertNotIn("환율값-금리값 상관계수", html)
+        self.assertNotIn("환율 변화율-금리 변화폭 상관계수", html)
+        self.assertNotIn("0.72", html)
+        self.assertNotIn("-0.35", html)
+        self.assertNotIn("kpi-warning-item", html)
+        self.assertNotIn("공통 추세만으로도 높게 나타날 수 있습니다", html)
+        self.assertNotIn("외부 요인 보간 거래일", html)
+        self.assertNotIn("직전 값(첫 구간은 다음 값)으로", html)
+        self.assertNotIn("보간된 구간은 상관계수와 이상치 계산에서 제외됩니다", html)
         self.assertIn("마지막 환율 ÷ 첫 환율", html)
         self.assertIn("금리 변화율이 아니라 변화폭", html)
 
@@ -419,6 +504,44 @@ class AppStockIntegrationTests(unittest.TestCase):
         self.assertEqual(progress.status_code, 200)
         self.assertEqual(progress.get_json()["stage"], "complete")
         self.assertEqual(progress.get_json()["percent"], 100)
+
+    @patch("src.app.run_integrated_analysis")
+    def test_multi_company_result_uses_comparison_dashboard(self, run_analysis):
+        result = self.fake_result()
+        second_financial = result.financial.iloc[0].copy()
+        second_financial["기업명"] = "SK하이닉스"
+        result.financial = pd.concat(
+            [result.financial, second_financial.to_frame().T], ignore_index=True
+        )
+        second_summary = result.stock_summary.iloc[0].copy()
+        second_summary["기업명"] = "SK하이닉스"
+        second_summary["종목코드"] = "000660"
+        result.stock_summary = pd.concat(
+            [result.stock_summary, second_summary.to_frame().T], ignore_index=True
+        )
+        second_payload = deepcopy(result.kpi_payload["companies"][0])
+        second_payload["company"] = "SK하이닉스"
+        second_payload["financial_kpi"]["roe"]["value"] = 8.4
+        result.kpi_payload["companies"].append(second_payload)
+        run_analysis.return_value = result
+
+        response = self.client.post(
+            "/analyze",
+            data={
+                "company": ["삼성전자", "SK하이닉스"],
+                "number_of_years": "5",
+                "stock_period": "1y",
+            },
+        )
+        html = response.get_data(as_text=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("result-page-comparison", html)
+        self.assertIn("2개 기업을 같은 지표 기준으로 비교합니다.", html)
+        self.assertEqual(html.count('class="snapshot-kpi-section"'), 2)
+        self.assertIn("핵심 성과지표", html)
+        self.assertNotIn("삼성전자 세부 분석 펼치기", html)
+        self.assertEqual(html.count('data-tab="'), 4)
 
 
 if __name__ == "__main__":

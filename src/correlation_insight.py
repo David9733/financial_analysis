@@ -107,7 +107,7 @@ def _environment_text(
     ]
     if not parts:
         return "조회기간 실제 환경을 계산할 수 없습니다."
-    return f"조회기간 실제 환경: {'·'.join(parts)}."
+    return f"조회기간 실제 환경: {', '.join(parts)}."
 
 
 def _build_macro_radar_insight(macro_kpi: dict[str, dict[str, Any]]) -> str | None:
@@ -172,8 +172,8 @@ def _build_macro_radar_insight(macro_kpi: dict[str, dict[str, Any]]) -> str | No
             and row["switch_rate"] is not None
         ):
             stability_text = (
-                f"{window_text} 이동상관의 부호 유지율 {row['persistence']:.1f}%·"
-                f"전환 {int(row['switches'])}회·전환율 {row['switch_rate']:.1f}%로 "
+                f"{window_text} 이동상관의 부호 유지율 {row['persistence']:.1f}%, "
+                f"전환 {int(row['switches'])}회, 전환율 {row['switch_rate']:.1f}%로 "
                 + (
                     "안정적입니다"
                     if row["base_judgement"].endswith("× 안정")
@@ -183,7 +183,9 @@ def _build_macro_radar_insight(macro_kpi: dict[str, dict[str, Any]]) -> str | No
         descriptions.append(
             f"{row['factor']}은 기업 r={row['company_corr']:+.2f}, "
             f"{market_name} r={row['market_corr']:+.2f}, 시장 대비 "
-            f"{row['excess_corr']:+.2f}로 {row['judgement']}이며, {stability_text}"
+            f"{row['excess_corr']:+.2f}로 "
+            f"{row['base_judgement'].split(' × ')[0]}"
+            f"{' (단기 참고)' if row['short_term'] else ''}이며, {stability_text}"
         )
 
     strongest = radar_rows[0]
@@ -224,8 +226,10 @@ def _build_macro_radar_insight(macro_kpi: dict[str, dict[str, Any]]) -> str | No
         {"시장지수", *(row["factor"] for row in radar_rows)},
     )
     return (
-        f"{environment} 매크로 레이더: {'; '.join(descriptions)}. {conclusion} "
-        "이는 선택기간의 과거 동행성과 시장 대비 차이이며 인과관계나 미래 방향을 뜻하지 않습니다."
+        f"{environment} 매크로 레이더: {'; '.join(descriptions)}. "
+        f"핵심 판정: {conclusion} "
+        "해석 유의: 선택기간의 과거 동행성과 시장 대비 차이이며 "
+        "인과관계나 미래 방향을 뜻하지 않습니다."
     )
 
 
@@ -301,7 +305,7 @@ def build_correlation_insight(macro_kpi: dict[str, dict[str, Any]]) -> str:
     strong_signals = [signal for signal in signals if signal["strong"]]
     strong_text = ""
     if strong_signals:
-        strong_text = " 강한 신호: " + "·".join(
+        strong_text = " 강한 신호: " + ", ".join(
             f"{signal['factor']} {signal['effect']}" for signal in strong_signals
         ) + "."
     evidence = f" ({', '.join(evidence_parts)})" if evidence_parts else ""

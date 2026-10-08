@@ -72,7 +72,7 @@ class KPIAnalysisTests(unittest.TestCase):
         )
         company = payload["companies"][0]
 
-        self.assertEqual(payload["schema_version"], "1.3")
+        self.assertEqual(payload["schema_version"], "1.4")
         self.assertEqual(company["financial_period"], "2025")
         self.assertAlmostEqual(company["financial_kpi"]["net_margin"]["value"], 8.33)
         self.assertAlmostEqual(company["financial_kpi"]["roa"]["value"], 11.11)
@@ -90,6 +90,25 @@ class KPIAnalysisTests(unittest.TestCase):
             company["financial_history"][0]["financial_kpi"]["roe"]["value"],
             12.0,
         )
+
+    def test_volume_history_only_changes_recent_volume_kpi(self):
+        history = self.stock_frame().copy()
+        selected = history.tail(20).copy()
+
+        payload = build_kpi_payload(
+            self.financial_frame(),
+            selected,
+            "1m",
+            volume_history=history,
+        )
+        market = payload["companies"][0]["market_kpi"]
+
+        self.assertEqual(market["recent_volume_change"]["status"], "available")
+        self.assertEqual(
+            market["start_date"]["value"],
+            selected["기준일"].min().date().isoformat(),
+        )
+        self.assertEqual(market["average_volume"]["value"], round(selected["거래량"].mean()))
 
     def test_missing_stock_data_is_explicit(self):
         payload = build_kpi_payload(

@@ -136,6 +136,8 @@ STOCK_PERIOD_DAYS = {
     "1y": 366,
     "3y": 1096,
 }
+VOLUME_CHANGE_LOOKBACK_CALENDAR_DAYS = 70
+ENABLE_GPT_INSIGHTS = False
 LOGGER = logging.getLogger(__name__)
 ProgressCallback = Callable[[str, int, str], None]
 
@@ -174,12 +176,65 @@ class IntegratedAnalysisResult:
     market_macro: pd.DataFrame = field(
         default_factory=lambda: pd.DataFrame(columns=MARKET_MACRO_COLUMNS)
     )
+    market_overview: list[dict] = field(default_factory=list)
     quality_log: pd.DataFrame = field(
         default_factory=lambda: pd.DataFrame(columns=LOG_COLUMNS)
     )
 
 
 PRICE_LEVEL_COLUMNS = ("시가", "고가", "저가")
+
+
+def _market_overview_item(
+    key: str,
+    label: str,
+    frame: pd.DataFrame,
+    value_column: str,
+    trading_start: date,
+    trading_end: date,
+    unit: str,
+    change_kind: str,
+) -> dict:
+    """화면 상단에 표시할 최신값과 선택기간 변화를 만든다."""
+    item = {
+        "key": key,
+        "label": label,
+        "latest_date": None,
+        "latest_value": None,
+        "unit": unit,
+        "change": None,
+        "change_unit": "%" if change_kind == "pct" else "bp",
+        "status": "missing",
+    }
+    if frame.empty or value_column not in frame:
+        return item
+
+    data = frame[["기준일", value_column]].copy()
+    data["기준일"] = pd.to_datetime(data["기준일"], errors="coerce")
+    data[value_column] = pd.to_numeric(data[value_column], errors="coerce")
+    data = data.dropna().sort_values("기준일")
+    data = data[data["기준일"].dt.date <= trading_end]
+    if data.empty:
+        return item
+
+    latest = data.iloc[-1]
+    period = data[data["기준일"].dt.date >= trading_start]
+    first = period.iloc[0] if not period.empty else data.iloc[0]
+    latest_value = float(latest[value_column])
+    first_value = float(first[value_column])
+    if change_kind == "pct":
+        change = (latest_value / first_value - 1) * 100 if first_value else None
+    else:
+        change = (latest_value - first_value) * 100
+    item.update(
+        {
+            "latest_date": latest["기준일"].date().isoformat(),
+            "latest_value": latest_value,
+            "change": change,
+            "status": "available",
+        }
+    )
+    return item
 
 
 def correct_stock_price_errors(
@@ -243,11 +298,14 @@ def collect_market_macro(
         if "시장구분" in stock_prices
         else []
     )
-    requested_markets = {
+    company_markets = {
         market
         for category in categories
         if (market := market_index_for_category(category)) is not None
     }
+    # 두 지수는 결과 상단 표시를 위해 모두 조회한다. 기업별 분석에는 아래 병합
+    # 단계에서 기존처럼 해당 기업의 company_markets만 연결된다.
+    requested_markets = company_markets | {"KOSPI", "KOSDAQ"}
     unsupported_categories = sorted(
         {
             category
@@ -308,7 +366,7 @@ def collect_market_macro(
     except (MacroAPIError, ValueError) as error:
         warnings.append(f"환율 데이터를 불러오지 못했습니다. ({error})")
 
-    _notify_progress(progress_callback, "macro", 74, "국고채 3년 금리를 수집하고 있습니다.")
+    _notify_progress(progress_callback, "macro", 74, "금리를 수집하고 있습니다.")
     rate_rows: list = []
     corporate_bond_rows: list = []
     rate_client = None
@@ -333,16 +391,54 @@ def collect_market_macro(
             warnings.append(f"회사채 AA- 금리를 불러오지 못했습니다. ({error})")
 
     # 외부 요인을 모두 못 받아도 종가 하루 변화 이상치는 표시한다.
+    fx_frame = prepare_macro_series(fx_rows, FX_COLUMN)
+    rate_frame = prepare_macro_series(rate_rows, RATE_COLUMN)
     merged = merge_macro_with_prices(
         prices=stock_prices,
-        fx=prepare_macro_series(fx_rows, FX_COLUMN),
-        rate=prepare_macro_series(rate_rows, RATE_COLUMN),
+        fx=fx_frame,
+        rate=rate_frame,
         corporate_bond=prepare_macro_series(
             corporate_bond_rows, CORPORATE_BOND_COLUMN
         ),
         market_indices=market_indices,
         log=log,
     )
+    merged.attrs["market_overview"] = [
+        _market_overview_item(
+            market,
+            market,
+            market_indices.get(
+                market, pd.DataFrame(columns=["기준일", MARKET_INDEX_COLUMN])
+            ),
+            MARKET_INDEX_COLUMN,
+            trading_start,
+            trading_end,
+            "p",
+            "pct",
+        )
+        for market in ("KOSPI", "KOSDAQ")
+    ] + [
+        _market_overview_item(
+            "usd_krw",
+            "원/달러 환율",
+            fx_frame,
+            FX_COLUMN,
+            trading_start,
+            trading_end,
+            "원",
+            "pct",
+        ),
+        _market_overview_item(
+            "treasury_3y",
+            "금리",
+            rate_frame,
+            RATE_COLUMN,
+            trading_start,
+            trading_end,
+            "%",
+            "diff",
+        ),
+    ]
     LOGGER.info(
         "macro_merged trading_rows=%d merged_rows=%d market_indices=%s fx_rows=%d rate_rows=%d corporate_bond_rows=%d",
         len(stock_prices),
@@ -506,6 +602,7 @@ def run_integrated_analysis(
     resolved_companies = financial.attrs.get("resolved_companies", [])
     warnings: list[str] = []
     price_frames: list[pd.DataFrame] = []
+    volume_history_frames: list[pd.DataFrame] = []
     investor_frames: list[pd.DataFrame] = []
     quality_log = QualityLog()
 
@@ -517,6 +614,11 @@ def run_integrated_analysis(
 
     period_end = date.today()
     period_start = period_end - timedelta(days=STOCK_PERIOD_DAYS[stock_period])
+    collection_start = (
+        period_end - timedelta(days=VOLUME_CHANGE_LOOKBACK_CALENDAR_DAYS)
+        if stock_period == "1m"
+        else period_start
+    )
     _notify_progress(progress_callback, "market", 46, "주식시장 데이터를 준비하고 있습니다.")
     for index, company in enumerate(resolved_companies):
         if stock_client is None:
@@ -535,17 +637,29 @@ def run_integrated_analysis(
             continue
         try:
             rows = stock_client.get_stock_prices(
-                stock_code, start_date=period_start, end_date=period_end
+                stock_code, start_date=collection_start, end_date=period_end
             )
         except (StockAPIError, ValueError) as error:
             warnings.append(f"{company_name}: 주식시세 API 조회 실패 ({error})")
             continue
-        frame = prepare_stock_prices(rows, company_name, stock_code)
-        if frame.empty:
+        collected_frame = prepare_stock_prices(rows, company_name, stock_code)
+        if collected_frame.empty:
             warnings.append(f"{company_name}: 선택 기간의 주식시세 데이터가 없습니다.")
             continue
-        frame = correct_stock_price_errors(frame, company_name, quality_log)
+        selected_frame = collected_frame[
+            collected_frame["기준일"] >= pd.Timestamp(period_start)
+        ].copy()
+        if selected_frame.empty:
+            warnings.append(f"{company_name}: 선택 기간의 주식시세 데이터가 없습니다.")
+            continue
+        frame = correct_stock_price_errors(selected_frame, company_name, quality_log)
         price_frames.append(frame)
+        if stock_period == "1m":
+            volume_history_frames.append(
+                correct_stock_price_errors(collected_frame, company_name, QualityLog())
+            )
+        else:
+            volume_history_frames.append(frame)
         actual_start = frame["기준일"].min().date()
         actual_end = frame["기준일"].max().date()
         try:
@@ -562,6 +676,7 @@ def run_integrated_analysis(
 
     if price_frames:
         stock_prices = pd.concat(price_frames, ignore_index=True)
+        volume_history = pd.concat(volume_history_frames, ignore_index=True)
         stock_summary = summarize_stock_prices(stock_prices)
         investor_summary = (
             pd.concat(investor_frames, ignore_index=True)
@@ -587,6 +702,7 @@ def run_integrated_analysis(
         )
     else:
         stock_prices = prepare_stock_prices([], "", "")
+        volume_history = stock_prices.copy()
         stock_summary = summarize_stock_prices(stock_prices)
         investor_summary = empty_investor_summary()
 
@@ -626,34 +742,39 @@ def run_integrated_analysis(
     )
 
     kpi_payload = build_kpi_payload(
-        financial, stock_prices, stock_period, market_macro=market_macro
+        financial,
+        stock_prices,
+        stock_period,
+        market_macro=market_macro,
+        volume_history=volume_history,
     )
     (target_output_dir / "kpi_analysis.json").write_text(
         json.dumps(kpi_payload, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     gpt_insights: list[dict] = []
     gpt_comparisons: list[dict] = []
-    _notify_progress(progress_callback, "gpt", 78, "GPT 자동 인사이트를 생성하고 있습니다.")
-    gpt_started_at = time.monotonic()
-    try:
-        gpt_result = analyze_kpis(kpi_payload, PROJECT_ROOT)
-        gpt_insights = gpt_result["analyses"]
-        gpt_comparisons = gpt_result["comparisons"]
-    except GPTAnalysisError as error:
-        warnings.append(f"GPT 자동 분석을 불러오지 못했습니다. ({error})")
-        LOGGER.warning(
-            "gpt_analysis_failed company_count=%d elapsed_seconds=%.2f error=%s",
-            len(kpi_payload.get("companies", [])),
-            time.monotonic() - gpt_started_at,
-            error,
-        )
-    else:
-        LOGGER.info(
-            "gpt_analysis_completed company_count=%d comparison_count=%d elapsed_seconds=%.2f",
-            len(gpt_insights),
-            len(gpt_comparisons),
-            time.monotonic() - gpt_started_at,
-        )
+    if ENABLE_GPT_INSIGHTS:
+        _notify_progress(progress_callback, "gpt", 78, "GPT 자동 인사이트를 생성하고 있습니다.")
+        gpt_started_at = time.monotonic()
+        try:
+            gpt_result = analyze_kpis(kpi_payload, PROJECT_ROOT)
+            gpt_insights = gpt_result["analyses"]
+            gpt_comparisons = gpt_result["comparisons"]
+        except GPTAnalysisError as error:
+            warnings.append(f"GPT 자동 분석을 불러오지 못했습니다. ({error})")
+            LOGGER.warning(
+                "gpt_analysis_failed company_count=%d elapsed_seconds=%.2f error=%s",
+                len(kpi_payload.get("companies", [])),
+                time.monotonic() - gpt_started_at,
+                error,
+            )
+        else:
+            LOGGER.info(
+                "gpt_analysis_completed company_count=%d comparison_count=%d elapsed_seconds=%.2f",
+                len(gpt_insights),
+                len(gpt_comparisons),
+                time.monotonic() - gpt_started_at,
+            )
     if gpt_insights or gpt_comparisons:
         (target_output_dir / "gpt_insights.json").write_text(
             json.dumps(
@@ -676,6 +797,7 @@ def run_integrated_analysis(
         gpt_insights=gpt_insights,
         gpt_comparisons=gpt_comparisons,
         market_macro=market_macro,
+        market_overview=market_macro.attrs.get("market_overview", []),
         quality_log=quality_frame,
     )
 

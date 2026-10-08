@@ -277,7 +277,10 @@ def _financial_kpis(company_rows: pd.DataFrame) -> tuple[int, str, dict[str, dic
     }
 
 
-def _market_kpis(company_prices: pd.DataFrame) -> dict[str, dict]:
+def _market_kpis(
+    company_prices: pd.DataFrame,
+    volume_history: pd.DataFrame | None = None,
+) -> dict[str, dict]:
     if company_prices.empty:
         missing = {
             "status": "missing",
@@ -309,12 +312,17 @@ def _market_kpis(company_prices: pd.DataFrame) -> dict[str, dict]:
     daily_returns = prices["종가"].pct_change().dropna()
     volatility = daily_returns.std(ddof=1) * 100 if len(daily_returns) >= 2 else None
 
+    volume_prices = (
+        volume_history.sort_values("기준일").copy()
+        if volume_history is not None and not volume_history.empty
+        else prices
+    )
     volume_change = None
     volume_status = None
     volume_reason = None
-    if len(prices) >= 40:
-        recent_average = prices["거래량"].tail(20).mean()
-        previous_average = prices["거래량"].iloc[-40:-20].mean()
+    if len(volume_prices) >= 40:
+        recent_average = volume_prices["거래량"].tail(20).mean()
+        previous_average = volume_prices["거래량"].iloc[-40:-20].mean()
         volume_change = _safe_ratio(recent_average - previous_average, previous_average)
     else:
         volume_status = "no_comparison_period"
@@ -447,9 +455,11 @@ def _macro_radar_metrics(
     excess_metric = _metric(
         excess_corr,
         "",
+        digits=3,
         status=None if excess_corr is not None else unavailable_status,
         reason=None if excess_corr is not None else unavailable_reason,
     )
+    excess_metric["display_digits"] = 3
 
     if excess_corr is None:
         exposure = None
@@ -461,10 +471,16 @@ def _macro_radar_metrics(
         exposure = "약"
 
     stability_reason = None
+    neutral_direction_reason = (
+        "전체기간 기업 상관이 중립 구간(-0.1~+0.1)에 있어 기준 부호가 불명확함"
+    )
     persistence: float | None = None
     switches: int | None = None
     switch_rate: float | None = None
     stability: str | None = None
+    neutral_reference = (
+        company_corr is not None and abs(company_corr) <= RADAR_NEUTRAL_BAND
+    )
     rolling_setting = ROLLING_CORRELATION_SETTINGS.get(stock_period or "")
     window = rolling_setting[1] if rolling_setting is not None else None
     is_short_term = stock_period in SHORT_TERM_CORRELATION_PERIODS
@@ -472,8 +488,6 @@ def _macro_radar_metrics(
         stability_reason = "지원하는 조회기간의 이동 상관 설정이 없음"
     elif company_corr is None:
         stability_reason = company_corr_reason or "기업-매크로 상관계수를 계산할 수 없음"
-    elif abs(company_corr) <= RADAR_NEUTRAL_BAND:
-        stability_reason = "전체기간 기업 상관이 중립 구간(-0.1~+0.1)에 있어 기준 부호가 불명확함"
     else:
         _, window, min_observations = rolling_setting
         rolling = (
@@ -494,39 +508,56 @@ def _macro_radar_metrics(
             rolling_signs = pd.Series(0, index=rolling.index, dtype="int64")
             rolling_signs[rolling > RADAR_NEUTRAL_BAND] = 1
             rolling_signs[rolling < -RADAR_NEUTRAL_BAND] = -1
-            reference_sign = 1 if company_corr > 0 else -1
             directional_signs = rolling_signs[rolling_signs != 0]
             if len(directional_signs) < RADAR_MIN_DIRECTIONAL_VALUES:
                 stability_reason = "중립 구간을 제외한 방향성 이동 상관 관측치가 부족함"
             else:
-                persistence = float((rolling_signs == reference_sign).mean() * 100)
                 switches = int(
                     (directional_signs != directional_signs.shift()).sum() - 1
                 )
                 switch_opportunities = len(directional_signs) - 1
                 switch_rate = switches / switch_opportunities * 100
-                stability = _radar_stability_label(persistence, switch_rate)
+                if not neutral_reference:
+                    reference_sign = 1 if company_corr > 0 else -1
+                    persistence = float(
+                        (rolling_signs == reference_sign).mean() * 100
+                    )
+                    stability = _radar_stability_label(persistence, switch_rate)
 
-    stability_status = "available" if stability is not None else "no_comparison_period"
+    persistence_status = (
+        "available"
+        if persistence is not None
+        else "neutral_direction"
+        if neutral_reference and switches is not None
+        else "no_comparison_period"
+    )
+    switches_status = "available" if switches is not None else "no_comparison_period"
+    switch_rate_status = (
+        "available" if switch_rate is not None else "no_comparison_period"
+    )
     persistence_metric = _metric(
         persistence,
         "%",
         digits=1,
-        status=None if persistence is not None else stability_status,
-        reason=stability_reason,
+        status=None if persistence is not None else persistence_status,
+        reason=(
+            neutral_direction_reason
+            if persistence_status == "neutral_direction"
+            else stability_reason
+        ),
     )
     switches_metric = _metric(
         switches,
         "회",
         digits=0,
-        status=None if switches is not None else stability_status,
+        status=None if switches is not None else switches_status,
         reason=stability_reason,
     )
     switch_rate_metric = _metric(
         switch_rate,
         "%",
         digits=1,
-        status=None if switch_rate is not None else stability_status,
+        status=None if switch_rate is not None else switch_rate_status,
         reason=stability_reason,
     )
     stability_metrics = (persistence_metric, switches_metric, switch_rate_metric)
@@ -538,6 +569,10 @@ def _macro_radar_metrics(
             None,
             status=unavailable_status,
             reason=unavailable_reason,
+        )
+    elif neutral_reference and switches is not None:
+        judgement = _radar_text_metric(
+            f"노출 {exposure} × 안정성 판정 불가 (기준 방향 없음)"
         )
     elif stability is None:
         judgement = _radar_text_metric(f"노출 {exposure} × 안정성 자료 부족")
@@ -887,6 +922,7 @@ def build_kpi_payload(
     stock_prices: pd.DataFrame,
     stock_period: str,
     market_macro: pd.DataFrame | None = None,
+    volume_history: pd.DataFrame | None = None,
 ) -> dict[str, Any]:
     """기업별 최신 재무연도와 선택 주가기간의 KPI JSON을 만든다."""
     companies = []
@@ -906,6 +942,11 @@ def build_kpi_payload(
             if not stock_prices.empty
             else stock_prices
         )
+        company_volume_history = (
+            volume_history[volume_history["기업명"] == company_name]
+            if volume_history is not None and not volume_history.empty
+            else None
+        )
         companies.append(
             {
                 "company": company_name,
@@ -917,7 +958,7 @@ def build_kpi_payload(
                 "financial_history": financial_history,
                 "stock_period": stock_period,
                 "financial_kpi": financial_kpi,
-                "market_kpi": _market_kpis(company_prices),
+                "market_kpi": _market_kpis(company_prices, company_volume_history),
                 "macro_kpi": _macro_kpis(
                     market_macro[market_macro["기업명"] == company_name]
                     if market_macro is not None and not market_macro.empty
@@ -927,7 +968,7 @@ def build_kpi_payload(
             }
         )
     return {
-        "schema_version": "1.3",
+        "schema_version": "1.4",
         "generated_on": date.today().isoformat(),
         "companies": companies,
     }

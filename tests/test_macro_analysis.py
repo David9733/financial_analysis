@@ -7,7 +7,11 @@ import numpy as np
 import pandas as pd
 
 from src.data_quality import QualityLog
-from src.kpi_analysis import _macro_kpis, _radar_stability_label
+from src.kpi_analysis import (
+    _macro_kpis,
+    _macro_radar_metrics,
+    _radar_stability_label,
+)
 from src.macro_analysis import (
     CORPORATE_BOND_COLUMN,
     CREDIT_SPREAD_CHANGE_BP_COLUMN,
@@ -519,6 +523,9 @@ class MacroKPITests(unittest.TestCase):
         self.assertAlmostEqual(
             kpis["radar_usd_krw_excess_corr"]["value"], 2.0, places=2
         )
+        self.assertEqual(
+            kpis["radar_usd_krw_excess_corr"]["display_digits"], 3
+        )
         self.assertEqual(kpis["radar_usd_krw_sign_persistence"]["value"], 100.0)
         self.assertEqual(kpis["radar_usd_krw_sign_switches"]["value"], 0.0)
         self.assertEqual(kpis["radar_usd_krw_sign_switch_rate"]["value"], 0.0)
@@ -602,6 +609,52 @@ class MacroKPITests(unittest.TestCase):
         self.assertEqual(_radar_stability_label(79.9, 5.0), "흔들림")
         self.assertEqual(_radar_stability_label(80.0, 5.1), "흔들림")
 
+    def test_neutral_full_period_correlation_keeps_switch_metrics(self):
+        for company_corr, stock_period, sample_size, expected_window in (
+            (0.01, "1y", 140, 60),
+            (0.06, "1m", 60, 10),
+        ):
+            with self.subTest(
+                company_corr=company_corr,
+                stock_period=stock_period,
+            ):
+                rng = np.random.default_rng(73)
+                macro_change = pd.Series(rng.normal(0, 0.2, sample_size))
+                company_return = macro_change.copy()
+                company_return.iloc[sample_size // 2 :] *= -1
+                market_return = -macro_change
+                valid = pd.Series(True, index=macro_change.index)
+
+                metrics = _macro_radar_metrics(
+                    prefix="usd_krw",
+                    company_return=company_return,
+                    market_return=market_return,
+                    macro_change=macro_change,
+                    macro_pair_valid=valid,
+                    market_pair_valid=valid,
+                    company_corr=company_corr,
+                    company_corr_status=None,
+                    company_corr_reason=None,
+                    stock_period=stock_period,
+                )
+
+                persistence = metrics["radar_usd_krw_sign_persistence"]
+                switches = metrics["radar_usd_krw_sign_switches"]
+                switch_rate = metrics["radar_usd_krw_sign_switch_rate"]
+                judgement = metrics["radar_usd_krw_judgement"]
+
+                self.assertEqual(persistence["status"], "neutral_direction")
+                self.assertIsNone(persistence["value"])
+                self.assertEqual(persistence["window_days"], expected_window)
+                self.assertEqual(switches["status"], "available")
+                self.assertGreaterEqual(switches["value"], 1.0)
+                self.assertEqual(switch_rate["status"], "available")
+                self.assertGreater(switch_rate["value"], 0.0)
+                self.assertEqual(
+                    judgement["value"],
+                    "노출 강 × 안정성 판정 불가 (기준 방향 없음)",
+                )
+
     def test_radar_keeps_exposure_when_rolling_observations_are_insufficient(self):
         dates = pd.date_range("2026-08-03", periods=15, freq="B")
         changes = np.linspace(-0.3, 0.3, len(dates) - 1)
@@ -640,6 +693,14 @@ class MacroKPITests(unittest.TestCase):
         self.assertEqual(kpis["radar_usd_krw_excess_corr"]["status"], "available")
         self.assertEqual(
             kpis["radar_usd_krw_sign_persistence"]["status"],
+            "no_comparison_period",
+        )
+        self.assertEqual(
+            kpis["radar_usd_krw_sign_switches"]["status"],
+            "no_comparison_period",
+        )
+        self.assertEqual(
+            kpis["radar_usd_krw_sign_switch_rate"]["status"],
             "no_comparison_period",
         )
         self.assertEqual(

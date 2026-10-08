@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 from uuid import uuid4
 
+import pandas as pd
 from flask import Flask, abort, jsonify, render_template, request, send_from_directory, url_for
 
 if __package__:  # ``python -m src.app`` 또는 패키지 import
@@ -17,6 +18,7 @@ if __package__:  # ``python -m src.app`` 또는 패키지 import
     from .dart_api import CompanyNotFoundError, DartAPIError
     from .financial_analysis import FINAL_COLUMNS, format_result_for_csv
     from .main import (
+        ENABLE_GPT_INSIGHTS,
         OUTPUT_DIR,
         STOCK_PERIOD_DAYS,
         run_integrated_analysis,
@@ -26,6 +28,7 @@ else:  # ``python src/app.py``로 직접 실행
     from dart_api import CompanyNotFoundError, DartAPIError
     from financial_analysis import FINAL_COLUMNS, format_result_for_csv
     from main import (
+        ENABLE_GPT_INSIGHTS,
         OUTPUT_DIR,
         STOCK_PERIOD_DAYS,
         run_integrated_analysis,
@@ -94,8 +97,8 @@ KPI_LABELS = {
     "market_index_name": "비교 시장지수",
     "market_index_latest": "시장지수(최근)",
     "market_index_change": "시장지수 기간 수익률",
-    "treasury_3y_latest": "국고채 3년 금리(최근)",
-    "treasury_3y_change_bp": "국고채 3년 금리 기간 변화폭",
+    "treasury_3y_latest": "금리(최근)",
+    "treasury_3y_change_bp": "금리 기간 변화폭",
     "credit_spread_latest": "신용 스프레드(최근)",
     "credit_spread_change_bp": "신용 스프레드 기간 변화폭",
     "corr_return_usd_krw": "주가 수익률-환율 변화율 상관계수",
@@ -146,11 +149,11 @@ KPI_HELP_TEXT = {
     "net_margin": "매출 중 당기순이익이 차지하는 비율로, 당기순이익 ÷ 매출 × 100입니다.",
     "roe": (
         "자기자본으로 당기순이익을 얼마나 냈는지 나타냅니다. "
-        "당기순이익 ÷ 전년·당년 평균자본 × 100입니다."
+        "당기순이익 ÷ 전년과 당년 평균자본 × 100입니다."
     ),
     "roa": (
         "총자산으로 당기순이익을 얼마나 냈는지 나타냅니다. "
-        "당기순이익 ÷ 전년·당년 평균자산 × 100입니다."
+        "당기순이익 ÷ 전년과 당년 평균자산 × 100입니다."
     ),
     "debt_ratio": "자기자본 대비 부채 비율로, 부채총계 ÷ 자본총계 × 100입니다.",
     "interest_coverage_ratio": (
@@ -173,7 +176,8 @@ KPI_HELP_TEXT = {
     "average_trading_value": "선택한 주가 조회기간의 일별 거래대금을 평균한 값입니다.",
     "recent_volume_change": (
         "최근 20거래일 평균 거래량을 그 직전 20거래일 평균과 비교한 변화율입니다. "
-        "계산하려면 최소 40거래일이 필요합니다."
+        "계산하려면 최소 40거래일이 필요하며, 1개월 조회에서는 계산에만 선택기간 "
+        "이전 시세를 추가로 사용합니다."
     ),
     "price_to_ma20": (
         "최근 종가가 20일 이동평균보다 얼마나 높거나 낮은지 나타냅니다. "
@@ -187,14 +191,6 @@ KPI_HELP_TEXT = {
         "선택한 주가 조회기간의 첫 원/달러 환율과 마지막 환율을 비교한 값입니다. "
         "계산식은 (마지막 환율 ÷ 첫 환율 - 1) × 100이며 단위는 %입니다."
     ),
-    "market_index_name": (
-        "주식시세의 시장구분에 따라 자동 연결한 비교 기준입니다. "
-        "KOSPI 기업은 KOSPI, KOSDAQ 기업은 KOSDAQ을 사용합니다."
-    ),
-    "market_index_latest": (
-        "해당 기업의 마지막 주식 거래일에 확인되는 비교 시장지수 종가입니다. "
-        "KOSPI와 KOSDAQ은 지수 단위(p)로 표시합니다."
-    ),
     "market_index_change": (
         "선택한 주가 조회기간의 첫 시장지수 종가와 마지막 종가를 비교한 "
         "수익률입니다. 기업과 같은 시장 전체의 흐름을 보여 줍니다."
@@ -202,10 +198,6 @@ KPI_HELP_TEXT = {
     "corr_return_market_index": (
         "기업의 일간 주가 수익률과 해당 기업이 상장된 시장지수의 일간 수익률 간 "
         "Pearson 상관계수입니다. 시장 영향을 제거한 값은 아닙니다."
-    ),
-    "market_index_outlier_days": (
-        "비교 시장지수의 일간 수익률이 IQR 기준 통상 범위를 벗어난 거래일 수입니다. "
-        "오류로 단정하지 않고 확인 대상으로 표시합니다."
     ),
     "treasury_3y_change_bp": (
         "선택한 주가 조회기간의 마지막 국고채 3년 금리에서 첫 금리를 뺀 값입니다. "
@@ -228,6 +220,14 @@ KPI_HELP_TEXT = {
         "기업 주가-환율 상관에서 해당 시장지수-환율 상관을 뺀 값입니다. "
         "절댓값 0.15 미만은 노출 약, 0.15 이상 0.30 미만은 중, 0.30 이상은 강으로 판정합니다."
     ),
+    "radar_usd_krw_sign_persistence": (
+        "환율 이동상관 중 전체 조회기간의 기업-환율 상관과 같은 부호를 유지한 비율입니다. "
+        "-0.1~+0.1의 중립 이동상관도 전체 관측치에는 포함되며, 80% 이상을 안정 판정 기준으로 사용합니다."
+    ),
+    "radar_usd_krw_sign_switches": (
+        "-0.1~+0.1의 중립 구간을 제외한 환율 이동상관이 양수에서 음수 또는 음수에서 "
+        "양수로 바뀐 횟수입니다. 전환이 많을수록 조회기간 내 관계 방향이 자주 달라졌다는 뜻입니다."
+    ),
     "radar_treasury_3y_excess_corr": (
         "기업 주가-금리 상관에서 해당 시장지수-금리 상관을 뺀 값입니다. "
         "시장과 구별되는 과거 동행성의 크기이며 인과관계나 실제 금리 노출액은 아닙니다."
@@ -237,8 +237,8 @@ KPI_HELP_TEXT = {
         "시장과 구별되는 과거 동행성의 크기이며 기업 고유 신용위험을 직접 측정하지 않습니다."
     ),
     "radar_usd_krw_judgement": (
-        "시장 대비 상관 차이로 노출 강·중·약을 판정합니다. 이동상관 창은 1개월 10일, "
-        "3개월 20일, 6개월·1년·3년 60일이며, 부호 유지율 80% 이상과 전환율 5% 이하를 "
+        "시장 대비 상관 차이로 노출 강, 중 및 약을 판정합니다. 이동상관 창은 1개월 10일, "
+        "3개월 20일, 6개월과 1년 및 3년은 60일이며, 부호 유지율 80% 이상과 전환율 5% 이하를 "
         "안정으로 판정합니다. 1개월과 3개월은 단기 참고값입니다."
     ),
     "radar_treasury_3y_judgement": (
@@ -265,11 +265,44 @@ KPI_HELP_TEXT = {
         "확인하세요."
     ),
     "macro_filled_days": (
-        "주식 거래일에 시장지수·환율·국고채·회사채 관측값이 없어 직전 값(첫 구간은 다음 값)으로 "
+        "주식 거래일에 시장지수, 환율, 국고채 및 회사채 관측값이 없어 직전 값(첫 구간은 다음 값)으로 "
         "채운 날짜 수입니다. 보간된 구간은 상관계수와 이상치 계산에서 제외됩니다."
     ),
 }
 KPI_WARNING_KEYS = {"corr_usd_krw_treasury_3y_level"}
+MACRO_RADAR_TABLE_KEYS = (
+    "radar_usd_krw_excess_corr",
+    "radar_usd_krw_sign_persistence",
+    "radar_usd_krw_sign_switches",
+    "radar_usd_krw_sign_switch_rate",
+    "radar_treasury_3y_excess_corr",
+    "radar_treasury_3y_sign_persistence",
+    "radar_treasury_3y_sign_switches",
+    "radar_treasury_3y_sign_switch_rate",
+    "radar_credit_spread_excess_corr",
+    "radar_credit_spread_sign_persistence",
+    "radar_credit_spread_sign_switches",
+    "radar_credit_spread_sign_switch_rate",
+)
+MACRO_RADAR_JUDGEMENT_KEYS = (
+    ("환율", "radar_usd_krw_judgement"),
+    ("금리", "radar_treasury_3y_judgement"),
+    ("신용 스프레드", "radar_credit_spread_judgement"),
+)
+MACRO_TABLE_HIDDEN_KEYS = {
+    "corr_return_usd_krw",
+    "corr_return_treasury_3y",
+    "corr_return_market_index",
+    "corr_return_credit_spread",
+    "corr_usd_krw_treasury_3y_level",
+    "corr_usd_krw_treasury_3y_change",
+    "macro_filled_days",
+    "radar_usd_krw_market_corr",
+    "radar_treasury_3y_market_corr",
+    "radar_credit_spread_market_corr",
+} | set(MACRO_RADAR_TABLE_KEYS) | {
+    key for _, key in MACRO_RADAR_JUDGEMENT_KEYS
+}
 
 app = Flask(
     __name__,
@@ -403,6 +436,7 @@ def format_kpi_metric(metric: dict) -> str:
             "missing": "출처 데이터 없음",
             "not_applicable": "해당 없음",
             "no_comparison_period": "비교기간 없음",
+            "neutral_direction": "방향성 없음",
         }
         return status_labels.get(metric.get("status"), "확인 불가")
     value = metric["value"]
@@ -416,7 +450,8 @@ def format_kpi_metric(metric: dict) -> str:
         bp_text = f"{value:+,.2f}".rstrip("0").rstrip(".")
         pp_text = f"{value / 100:+.4f}".rstrip("0").rstrip(".")
         return f"{bp_text}bp ({pp_text}%p)"
-    return f"{value:,.2f}".rstrip("0").rstrip(".") + unit
+    display_digits = int(metric.get("display_digits", 2))
+    return f"{value:,.{display_digits}f}".rstrip("0").rstrip(".") + unit
 
 
 def build_kpi_card_metric(name: str, metric: dict) -> dict:
@@ -454,6 +489,174 @@ def build_kpi_cards(payload: dict) -> list[dict]:
             }
         )
     return cards
+
+
+HEADLINE_KPI_KEYS = {
+    "일반기업": ("revenue_growth", "operating_margin", "roe", "debt_ratio"),
+    "금융업": ("net_interest_income", "net_fee_income", "roe", "roa"),
+    "보험업": (
+        "insurance_revenue_growth",
+        "insurance_margin",
+        "roe",
+        "investment_profit",
+    ),
+}
+
+
+def _missing_metric(status: str = "missing") -> dict:
+    return {"value": None, "unit": "", "status": status, "reason": None}
+
+
+def build_headline_kpi_cards(payload: dict) -> list[dict]:
+    """업종별 대표 KPI 네 개를 기존 계산 결과에서 고른다."""
+    cards = []
+    for company in payload.get("companies", []):
+        keys = HEADLINE_KPI_KEYS.get(
+            company.get("analysis_type"), HEADLINE_KPI_KEYS["일반기업"]
+        )
+        financial = company.get("financial_kpi", {})
+        cards.append(
+            {
+                "company": company.get("company", ""),
+                "analysis_type": company.get("analysis_type", ""),
+                "metrics": [
+                    build_kpi_card_metric(key, financial.get(key, _missing_metric()))
+                    for key in keys
+                ],
+            }
+        )
+    return cards
+
+
+def build_kpi_matrix(
+    payload: dict,
+    section: str,
+    keys: list[str] | tuple[str, ...] | None = None,
+    hide_not_applicable: bool = False,
+    exclude_keys: set[str] | frozenset[str] | None = None,
+) -> dict:
+    """지표를 행, 기업을 열로 배치할 비교용 화면 모델을 만든다."""
+    companies = payload.get("companies", [])
+    if keys is None:
+        ordered_keys = []
+        for company in companies:
+            for key in company.get(section, {}):
+                if key not in ordered_keys:
+                    ordered_keys.append(key)
+    else:
+        ordered_keys = list(dict.fromkeys(keys))
+
+    rows = []
+    for key in ordered_keys:
+        if exclude_keys and key in exclude_keys:
+            continue
+        values = []
+        for company in companies:
+            metric = company.get(section, {}).get(key, _missing_metric("not_applicable"))
+            if hide_not_applicable and metric.get("status") == "not_applicable":
+                values.append("")
+            else:
+                values.append(format_kpi_metric(metric))
+        if hide_not_applicable and not any(values):
+            continue
+        rows.append(
+            {
+                "key": key,
+                "label": KPI_LABELS.get(key, key),
+                "values": values,
+                "help_text": KPI_HELP_TEXT.get(key),
+                "help_kind": "warning" if key in KPI_WARNING_KEYS else "info",
+            }
+        )
+    return {
+        "companies": [company.get("company", "") for company in companies],
+        "rows": rows,
+    }
+
+
+def build_headline_kpi_matrix(payload: dict) -> dict:
+    keys = []
+    for company in payload.get("companies", []):
+        for key in HEADLINE_KPI_KEYS.get(
+            company.get("analysis_type"), HEADLINE_KPI_KEYS["일반기업"]
+        ):
+            if key not in keys:
+                keys.append(key)
+    return build_kpi_matrix(payload, "financial_kpi", keys)
+
+
+def build_macro_radar_matrix(payload: dict) -> dict:
+    """화면에 실제 존재하는 매크로 레이더 KPI만 고정 순서로 묶는다."""
+    companies = payload.get("companies", [])
+    keys = [
+        key
+        for key in MACRO_RADAR_TABLE_KEYS
+        if any(key in company.get("macro_kpi", {}) for company in companies)
+    ]
+    return build_kpi_matrix(payload, "macro_kpi", keys)
+
+
+def build_macro_radar_summaries(payload: dict) -> list[dict]:
+    """레이더 최종 판정을 표 행 대신 제목 옆 요약으로 만든다."""
+    companies = payload.get("companies", [])
+    multiple_companies = len(companies) > 1
+    summaries = []
+    for company in companies:
+        company_name = company.get("company", "")
+        macro_kpis = company.get("macro_kpi", {})
+        for factor, key in MACRO_RADAR_JUDGEMENT_KEYS:
+            if key not in macro_kpis:
+                continue
+            value = format_kpi_metric(macro_kpis[key]).replace(" × ", " + ")
+            summaries.append(
+                {
+                    "label": (
+                        f"{company_name}, {factor}"
+                        if multiple_companies
+                        else factor
+                    ),
+                    "value": value,
+                }
+            )
+    return summaries
+
+
+def build_market_overview_cards(items: list[dict]) -> list[dict]:
+    cards = []
+    for item in items:
+        available = item.get("status") == "available"
+        value = item.get("latest_value")
+        unit = item.get("unit", "")
+        if not available or value is None:
+            value_text = "자료 없음"
+            change_text = "기간 변화 확인 불가"
+        else:
+            digits = 2 if unit in {"p", "%"} else 1
+            value_text = f"{value:,.{digits}f}{unit}"
+            change = item.get("change")
+            if change is None:
+                change_text = "기간 변화 확인 불가"
+            else:
+                change_unit = item.get("change_unit", "%")
+                change_text = f"기간 변화 {change:+,.2f}{change_unit}"
+        cards.append(
+            {
+                "key": item.get("key", ""),
+                "label": item.get("label", ""),
+                "date": item.get("latest_date") or "기준일 없음",
+                "value": value_text,
+                "change": change_text,
+                "available": available,
+            }
+        )
+    return cards
+
+
+def company_market_name(company: dict) -> str:
+    metric = company.get("macro_kpi", {}).get("market_index_name", {})
+    if metric.get("status") == "available" and metric.get("value"):
+        return str(metric["value"])
+    return "시장 확인 불가"
 
 
 def _kpi_lookup(payload: dict) -> dict[str, dict[str, dict]]:
@@ -547,6 +750,81 @@ def build_gpt_cards(insights: list[dict], comparisons: list[dict], payload: dict
 
 HEATMAP_FILENAME_PATTERN = re.compile(r"^market_correlation_heatmap_(.+)\.png$")
 
+STOCK_CHART_GROUPS = (
+    ("price", "주가"),
+    ("volume", "거래량"),
+    ("investor", "투자자"),
+    ("macro", "외부요인"),
+    ("correlation", "상관관계"),
+)
+
+
+def _stock_chart_group(filename: str) -> str:
+    if filename == "stock_comparison.png":
+        return "comparison"
+    if filename.startswith("stock_price"):
+        return "price"
+    if filename.startswith("stock_volume"):
+        return "volume"
+    if filename.startswith("stock_investor"):
+        return "investor"
+    if filename.startswith(("macro_", "daily_change_")):
+        return "macro"
+    return "correlation"
+
+
+def build_correlation_insight_sections(insight: str | None) -> dict | None:
+    """긴 상관관계 인사이트 문장을 화면에서 읽기 좋은 구역으로 나눈다."""
+    if not insight:
+        return None
+    main_text, notice_marker, notice = insight.partition(" 해석 유의: ")
+    environment, radar_marker, radar_text = main_text.partition(" 매크로 레이더: ")
+    if radar_marker:
+        evidence_text, conclusion_marker, conclusion = radar_text.partition(
+            ". 핵심 판정: "
+        )
+        evidence = [item.strip().rstrip(".") for item in evidence_text.split(";")]
+        return {
+            "environment": environment.strip(),
+            "evidence": [item for item in evidence if item],
+            "conclusion": conclusion.strip() if conclusion_marker else "",
+            "notice": notice.strip() if notice_marker else "",
+        }
+
+    environment, separator, conclusion = main_text.partition(". ")
+    return {
+        "environment": environment.strip() + ("." if separator else ""),
+        "evidence": [],
+        "conclusion": conclusion.strip(),
+        "notice": notice.strip() if notice_marker else "",
+    }
+
+
+def build_csv_preview(
+    key: str, label: str, frame: pd.DataFrame, download_url: str | None
+) -> dict:
+    """CSV와 같은 열 순서로 상위 5행을 보여 주는 화면 모델을 만든다."""
+    columns = list(frame.columns)
+    rows = []
+    for _, row in frame.head(5).iterrows():
+        formatted = []
+        for column in columns:
+            value = row[column]
+            if pd.isna(value):
+                formatted.append("")
+            elif isinstance(value, pd.Timestamp):
+                formatted.append(value.strftime("%Y-%m-%d"))
+            else:
+                formatted.append(str(value))
+        rows.append(formatted)
+    return {
+        "key": key,
+        "label": label,
+        "columns": columns,
+        "rows": rows,
+        "download_url": download_url,
+    }
+
 
 def build_stock_chart_items(
     chart_paths: list[Path], run_id: str, stock_summary, payload: dict
@@ -557,10 +835,19 @@ def build_stock_chart_items(
         str(row["종목코드"]): insight_by_company.get(row["기업명"])
         for _, row in stock_summary.iterrows()
     }
+    company_by_code = {
+        str(row["종목코드"]): row["기업명"] for _, row in stock_summary.iterrows()
+    }
+    only_company = next(iter(company_by_code.values()), None) if len(company_by_code) == 1 else None
     items = []
     for path in chart_paths:
         match = HEATMAP_FILENAME_PATTERN.fullmatch(path.name)
         insight = insight_by_code.get(match.group(1)) if match else None
+        company = only_company
+        for code, company_name in company_by_code.items():
+            if path.stem.endswith(f"_{code}"):
+                company = company_name
+                break
         items.append(
             {
                 "url": url_for(
@@ -568,9 +855,21 @@ def build_stock_chart_items(
                 ),
                 "filename": path.name,
                 "insight": insight,
+                "insight_sections": build_correlation_insight_sections(insight),
+                "company": company,
+                "group": _stock_chart_group(path.name),
             }
         )
     return items
+
+
+def group_stock_chart_items(items: list[dict]) -> list[dict]:
+    groups = []
+    for key, label in STOCK_CHART_GROUPS:
+        charts = [item for item in items if item.get("group") == key]
+        if charts:
+            groups.append({"key": key, "label": label, "charts": charts})
+    return groups
 
 
 @app.get("/")
@@ -704,11 +1003,33 @@ def analyze():
         integrated.stock_summary,
         integrated.kpi_payload,
     )
+    stock_comparison_charts = [
+        item for item in stock_chart_items if item.get("group") == "comparison"
+    ]
+    stock_chart_groups = group_stock_chart_items(stock_chart_items)
+    stock_price_chart_groups = [
+        group
+        for group in stock_chart_groups
+        if group["key"] in {"price", "volume", "investor"}
+    ]
+    macro_chart_groups = [
+        group
+        for group in stock_chart_groups
+        if group["key"] in {"macro", "correlation"}
+    ]
     stock_columns = list(integrated.stock_summary.columns)
     stock_rows = [
         [format_stock_value(column, row[column]) for column in stock_columns]
         for _, row in integrated.stock_summary.iterrows()
     ]
+    payload_companies = {
+        company.get("company"): company
+        for company in integrated.kpi_payload.get("companies", [])
+    }
+    headline_kpi_cards = build_headline_kpi_cards(integrated.kpi_payload)
+    headline_kpis_by_company = {
+        card["company"]: card["metrics"] for card in headline_kpi_cards
+    }
     stock_cards = [
         {
             "company": row["기업명"],
@@ -717,6 +1038,10 @@ def analyze():
             "close": format_stock_value("최근종가", row["최근종가"]),
             "return": format_stock_value("기간수익률", row["기간수익률"]),
             "market_cap": format_stock_value("시가총액", row["시가총액"]),
+            "market": company_market_name(
+                payload_companies.get(row["기업명"], {})
+            ),
+            "headline_kpis": headline_kpis_by_company.get(row["기업명"], []),
         }
         for _, row in integrated.stock_summary.iterrows()
     ]
@@ -748,11 +1073,38 @@ def analyze():
         if (run_dir / "data_quality_log.csv").is_file()
         else None
     )
-    gpt_insight_cards, gpt_comparison_cards = build_gpt_cards(
-        integrated.gpt_insights,
-        integrated.gpt_comparisons,
-        integrated.kpi_payload,
-    )
+    data_previews = [
+        build_csv_preview("financial", "재무 요약", display, csv_url),
+        build_csv_preview(
+            "stock-summary", "주가 요약", integrated.stock_summary, stock_summary_csv_url
+        ),
+        build_csv_preview(
+            "investor", "투자자 요약", integrated.investor_summary, investor_summary_csv_url
+        ),
+        build_csv_preview(
+            "daily-prices", "일별 시세 요약", integrated.stock_prices, stock_prices_csv_url
+        ),
+        build_csv_preview(
+            "market-macro",
+            "주가, 시장지수 및 외부요인 요약",
+            integrated.market_macro,
+            market_macro_csv_url,
+        ),
+        build_csv_preview(
+            "data-quality", "데이터 처리 요약", integrated.quality_log, data_quality_csv_url
+        ),
+    ]
+    if ENABLE_GPT_INSIGHTS:
+        gpt_insight_cards, gpt_comparison_cards = build_gpt_cards(
+            integrated.gpt_insights,
+            integrated.gpt_comparisons,
+            integrated.kpi_payload,
+        )
+    else:
+        gpt_insight_cards, gpt_comparison_cards = [], []
+    companies = display["기업명"].drop_duplicates().tolist()
+    analysis_mode = "single" if len(companies) == 1 else "comparison"
+    kpi_cards = build_kpi_cards(integrated.kpi_payload)
     update_analysis_progress(run_id, "complete", 100, "분석이 완료되었습니다.")
     (run_dir / COMPLETED_MARKER_NAME).touch()
     cleanup_expired_web_runs()
@@ -764,19 +1116,43 @@ def analyze():
         time.monotonic() - started_at,
     )
     return render_template(
-        "result.html",
-        companies=display["기업명"].drop_duplicates().tolist(),
+        "result_dashboard.html",
+        companies=companies,
+        analysis_mode=analysis_mode,
         columns=visible_columns,
         rows=rows,
         chart_urls=chart_urls,
         stock_chart_items=stock_chart_items,
+        stock_comparison_charts=stock_comparison_charts,
+        stock_chart_groups=stock_chart_groups,
+        stock_price_chart_groups=stock_price_chart_groups,
+        macro_chart_groups=macro_chart_groups,
         stock_columns=stock_columns,
         stock_rows=stock_rows,
         stock_cards=stock_cards,
         stock_period_label=STOCK_PERIOD_LABELS[stock_period],
-        kpi_cards=build_kpi_cards(integrated.kpi_payload),
+        kpi_cards=kpi_cards,
+        headline_kpi_cards=headline_kpi_cards,
+        headline_kpi_matrix=build_headline_kpi_matrix(integrated.kpi_payload),
+        financial_kpi_matrix=build_kpi_matrix(
+            integrated.kpi_payload, "financial_kpi", hide_not_applicable=True
+        ),
+        market_kpi_matrix=build_kpi_matrix(
+            integrated.kpi_payload, "market_kpi"
+        ),
+        macro_kpi_matrix=build_kpi_matrix(
+            integrated.kpi_payload,
+            "macro_kpi",
+            exclude_keys=MACRO_TABLE_HIDDEN_KEYS,
+        ),
+        macro_radar_matrix=build_macro_radar_matrix(integrated.kpi_payload),
+        macro_radar_summaries=build_macro_radar_summaries(
+            integrated.kpi_payload
+        ),
+        market_overview=build_market_overview_cards(integrated.market_overview),
         gpt_insights=gpt_insight_cards,
         gpt_comparisons=gpt_comparison_cards,
+        gpt_enabled=ENABLE_GPT_INSIGHTS,
         warnings=integrated.warnings,
         csv_url=csv_url,
         stock_prices_csv_url=stock_prices_csv_url,
@@ -784,6 +1160,7 @@ def analyze():
         investor_summary_csv_url=investor_summary_csv_url,
         market_macro_csv_url=market_macro_csv_url,
         data_quality_csv_url=data_quality_csv_url,
+        data_previews=data_previews,
     )
 
 
