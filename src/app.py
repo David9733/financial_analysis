@@ -102,6 +102,24 @@ KPI_LABELS = {
     "corr_return_market_index": "주가 수익률-시장지수 수익률 상관계수",
     "corr_return_treasury_3y": "주가 수익률-금리 변화폭 상관계수",
     "corr_return_credit_spread": "주가 수익률-신용 스프레드 변화폭 상관계수",
+    "radar_usd_krw_market_corr": "시장지수 수익률-환율 변화율 상관계수",
+    "radar_usd_krw_excess_corr": "환율 시장 대비 상관 차이",
+    "radar_usd_krw_sign_persistence": "환율 이동상관 부호 유지율",
+    "radar_usd_krw_sign_switches": "환율 이동상관 부호 전환",
+    "radar_usd_krw_sign_switch_rate": "환율 이동상관 부호 전환율",
+    "radar_usd_krw_judgement": "환율 매크로 레이더 판정",
+    "radar_treasury_3y_market_corr": "시장지수 수익률-금리 변화폭 상관계수",
+    "radar_treasury_3y_excess_corr": "금리 시장 대비 상관 차이",
+    "radar_treasury_3y_sign_persistence": "금리 이동상관 부호 유지율",
+    "radar_treasury_3y_sign_switches": "금리 이동상관 부호 전환",
+    "radar_treasury_3y_sign_switch_rate": "금리 이동상관 부호 전환율",
+    "radar_treasury_3y_judgement": "금리 매크로 레이더 판정",
+    "radar_credit_spread_market_corr": "시장지수 수익률-신용 스프레드 상관계수",
+    "radar_credit_spread_excess_corr": "신용 스프레드 시장 대비 상관 차이",
+    "radar_credit_spread_sign_persistence": "신용 스프레드 이동상관 부호 유지율",
+    "radar_credit_spread_sign_switches": "신용 스프레드 이동상관 부호 전환",
+    "radar_credit_spread_sign_switch_rate": "신용 스프레드 이동상관 부호 전환율",
+    "radar_credit_spread_judgement": "신용 스프레드 매크로 레이더 판정",
     "corr_usd_krw_treasury_3y_level": "환율값-금리값 상관계수",
     "corr_usd_krw_treasury_3y_change": "환율 변화율-금리 변화폭 상관계수",
     "macro_filled_days": "외부 요인 보간 거래일",
@@ -205,6 +223,41 @@ KPI_HELP_TEXT = {
     "corr_return_credit_spread": (
         "일간 주가 수익률과 신용 스프레드 일간 변화폭의 Pearson 상관계수입니다. "
         "기업의 실제 차입금리나 인과관계를 뜻하지 않습니다."
+    ),
+    "radar_usd_krw_excess_corr": (
+        "기업 주가-환율 상관에서 해당 시장지수-환율 상관을 뺀 값입니다. "
+        "절댓값 0.15 미만은 노출 약, 0.15 이상 0.30 미만은 중, 0.30 이상은 강으로 판정합니다."
+    ),
+    "radar_treasury_3y_excess_corr": (
+        "기업 주가-금리 상관에서 해당 시장지수-금리 상관을 뺀 값입니다. "
+        "시장과 구별되는 과거 동행성의 크기이며 인과관계나 실제 금리 노출액은 아닙니다."
+    ),
+    "radar_credit_spread_excess_corr": (
+        "기업 주가-신용 스프레드 상관에서 해당 시장지수-신용 스프레드 상관을 뺀 값입니다. "
+        "시장과 구별되는 과거 동행성의 크기이며 기업 고유 신용위험을 직접 측정하지 않습니다."
+    ),
+    "radar_usd_krw_judgement": (
+        "시장 대비 상관 차이로 노출 강·중·약을 판정합니다. 이동상관 창은 1개월 10일, "
+        "3개월 20일, 6개월·1년·3년 60일이며, 부호 유지율 80% 이상과 전환율 5% 이하를 "
+        "안정으로 판정합니다. 1개월과 3개월은 단기 참고값입니다."
+    ),
+    "radar_treasury_3y_judgement": (
+        "시장 대비 상관 차이와 기간별 이동상관 안정성을 결합한 금리 레이더 판정입니다. "
+        "1개월과 3개월 판정은 단기 참고값이며 장기적인 노출을 뜻하지 않습니다."
+    ),
+    "radar_credit_spread_judgement": (
+        "시장 대비 상관 차이와 기간별 이동상관 안정성을 결합한 신용 스프레드 레이더 판정입니다. "
+        "강하고 안정적이면 구조적 노출 후보, 강하지만 흔들리면 사건성 노출 후보로 해석합니다."
+    ),
+    "radar_usd_krw_sign_switch_rate": (
+        "중립 구간(-0.1~+0.1)을 제외한 이동상관 부호가 바뀐 횟수를 "
+        "전환 가능한 구간 수로 나눈 값입니다. 5% 이하를 안정 기준으로 사용합니다."
+    ),
+    "radar_treasury_3y_sign_switch_rate": (
+        "금리 이동상관의 부호 전환 횟수 ÷ 전환 가능한 구간 수 × 100입니다."
+    ),
+    "radar_credit_spread_sign_switch_rate": (
+        "신용 스프레드 이동상관의 부호 전환 횟수 ÷ 전환 가능한 구간 수 × 100입니다."
     ),
     "corr_usd_krw_treasury_3y_level": (
         "주의: 수준값 상관계수는 환율과 금리의 공통 추세만으로도 높게 나타날 수 "

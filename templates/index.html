@@ -6,28 +6,31 @@
   <title>DART 기업 재무분석</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
-<body>
+<body class="search-page">
   <main class="shell">
     <section class="hero">
-      <p class="eyebrow">OPEN DART FINANCIAL LAB</p>
-      <h1>기업의 숫자를<br>한눈에 비교하세요.</h1>
+        <h1 class="financial-logo">FINANCIAL LAB</h1>
       <p class="lead">기업명만 입력하면 재무지표와 일별 주식시장 데이터를 함께 분석합니다.</p>
     </section>
 
     <section class="panel input-panel">
       <form action="{{ url_for('analyze') }}" method="post">
-        <label for="company-1">기업명</label>
-        <div id="company-list" class="company-list">
-          {% for value in company_values %}
-            <div class="company-row">
-              <input id="company-{{ loop.index }}" type="text" name="company"
-                value="{{ value }}" placeholder="예: 삼성전자" required autocomplete="off">
-              <button type="button" class="remove-company" aria-label="이 기업 삭제">−</button>
-            </div>
-          {% endfor %}
+        <div class="company-label">
+          <label for="company-1">기업명</label>
+          <span>최대 10개까지 추가</span>
         </div>
-        <button type="button" id="add-company" class="add-company">+ 기업 추가</button>
-        <p class="hint">한 칸에 한 기업씩 최대 10개까지 추가할 수 있습니다.</p>
+        <div class="company-entry">
+          <div id="company-list" class="company-list">
+            {% for value in company_values %}
+              <div class="company-row">
+                <input id="company-{{ loop.index }}" type="text" name="company"
+                  value="{{ value }}" placeholder="예: 삼성전자" required autocomplete="off">
+                <button type="button" class="remove-company" aria-label="이 기업 삭제">−</button>
+              </div>
+            {% endfor %}
+          </div>
+          <button type="button" id="add-company" class="add-company">+ 기업 추가</button>
+        </div>
 
         <div class="field-row">
           <div>
@@ -51,11 +54,6 @@
 
         {% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
       </form>
-    </section>
-
-    <section class="examples">
-      <span>부분 이름이나 약간의 오타가 있어도 비슷한 기업을 찾습니다</span>
-      <div><code>현대그린</code><code>에스케이하닉스</code><code>삼성전짜</code><code>엘지화확</code></div>
     </section>
 
     <section id="analysis-progress" class="analysis-progress panel" hidden aria-live="polite">

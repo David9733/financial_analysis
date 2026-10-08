@@ -72,6 +72,7 @@ class KPIAnalysisTests(unittest.TestCase):
         )
         company = payload["companies"][0]
 
+        self.assertEqual(payload["schema_version"], "1.3")
         self.assertEqual(company["financial_period"], "2025")
         self.assertAlmostEqual(company["financial_kpi"]["net_margin"]["value"], 8.33)
         self.assertAlmostEqual(company["financial_kpi"]["roa"]["value"], 11.11)

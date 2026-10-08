@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 
 from src.data_quality import QualityLog
-from src.kpi_analysis import _macro_kpis
+from src.kpi_analysis import _macro_kpis, _radar_stability_label
 from src.macro_analysis import (
     CORPORATE_BOND_COLUMN,
     CREDIT_SPREAD_CHANGE_BP_COLUMN,
@@ -328,6 +328,14 @@ class MacroKPITests(unittest.TestCase):
         self.assertEqual(kpis["corr_return_usd_krw"]["status"], "available")
         self.assertEqual(kpis["corr_return_usd_krw"]["observations"], 29)
         self.assertEqual(kpis["corr_return_treasury_3y"]["observations"], 29)
+        self.assertEqual(
+            kpis["radar_usd_krw_market_corr"]["status"],
+            "no_comparison_period",
+        )
+        self.assertEqual(
+            kpis["radar_usd_krw_judgement"]["status"],
+            "no_comparison_period",
+        )
         # 금리가 변하지 않아 분산이 0이면 상관계수를 만들지 않는다.
         self.assertEqual(kpis["corr_return_treasury_3y"]["status"], "missing")
         self.assertEqual(
@@ -470,6 +478,174 @@ class MacroKPITests(unittest.TestCase):
             "corr_usd_krw_treasury_3y_change",
         ):
             self.assertEqual(kpis[name]["status"], "available")
+
+    def test_macro_radar_compares_company_with_market_and_measures_stability(self):
+        dates = pd.date_range("2025-01-02", periods=140, freq="B")
+        rng = np.random.default_rng(42)
+        macro_changes = rng.normal(0, 0.25, len(dates) - 1)
+        company_returns = np.r_[0.0, macro_changes]
+        market_returns = np.r_[0.0, -macro_changes]
+        company_prices = 100 * np.cumprod(1 + company_returns / 100)
+        market_prices = 2500 * np.cumprod(1 + market_returns / 100)
+        fx_values = [1300.0]
+        for change in macro_changes:
+            fx_values.append(fx_values[-1] * (1 + change / 100))
+
+        prices = price_frame(
+            list(dates.strftime("%Y-%m-%d")), list(company_prices)
+        ).assign(시장구분="KOSPI")
+        fx = prepare_macro_series(
+            [(day.date(), value) for day, value in zip(dates, fx_values)],
+            FX_COLUMN,
+        )
+        market_index = prepare_macro_series(
+            [(day.date(), value) for day, value in zip(dates, market_prices)],
+            MARKET_INDEX_COLUMN,
+        )
+
+        kpis = _macro_kpis(
+            merge_macro_with_prices(
+                prices,
+                fx=fx,
+                market_indices={"KOSPI": market_index},
+            ),
+            stock_period="1y",
+        )
+
+        self.assertAlmostEqual(kpis["corr_return_usd_krw"]["value"], 1.0, places=2)
+        self.assertAlmostEqual(
+            kpis["radar_usd_krw_market_corr"]["value"], -1.0, places=2
+        )
+        self.assertAlmostEqual(
+            kpis["radar_usd_krw_excess_corr"]["value"], 2.0, places=2
+        )
+        self.assertEqual(kpis["radar_usd_krw_sign_persistence"]["value"], 100.0)
+        self.assertEqual(kpis["radar_usd_krw_sign_switches"]["value"], 0.0)
+        self.assertEqual(kpis["radar_usd_krw_sign_switch_rate"]["value"], 0.0)
+        self.assertEqual(kpis["radar_usd_krw_sign_persistence"]["window_days"], 60)
+        self.assertEqual(
+            kpis["radar_usd_krw_judgement"]["value"], "노출 강 × 안정"
+        )
+
+        six_month_kpis = _macro_kpis(
+            merge_macro_with_prices(
+                prices,
+                fx=fx,
+                market_indices={"KOSPI": market_index},
+            ),
+            stock_period="6m",
+        )
+        self.assertEqual(
+            six_month_kpis["radar_usd_krw_sign_persistence"]["window_days"], 60
+        )
+        self.assertEqual(
+            six_month_kpis["radar_usd_krw_judgement"]["value"], "노출 강 × 안정"
+        )
+
+    def test_short_macro_radar_uses_period_window_and_marks_reference_only(self):
+        dates = pd.date_range("2026-01-02", periods=45, freq="B")
+        rng = np.random.default_rng(51)
+        changes = rng.normal(0, 0.2, len(dates) - 1)
+        returns = np.r_[0.0, changes]
+        prices = price_frame(
+            list(dates.strftime("%Y-%m-%d")),
+            list(100 * np.cumprod(1 + returns / 100)),
+        ).assign(시장구분="KOSPI")
+        fx_values = [1350.0]
+        for change in changes:
+            fx_values.append(fx_values[-1] * (1 + change / 100))
+        fx = prepare_macro_series(
+            [(day.date(), value) for day, value in zip(dates, fx_values)],
+            FX_COLUMN,
+        )
+        market_index = prepare_macro_series(
+            [
+                (day.date(), value)
+                for day, value in zip(
+                    dates,
+                    2500 * np.cumprod(1 + np.r_[0.0, -changes] / 100),
+                )
+            ],
+            MARKET_INDEX_COLUMN,
+        )
+
+        merged = merge_macro_with_prices(
+            prices,
+            fx=fx,
+            market_indices={"KOSPI": market_index},
+        )
+        for stock_period, expected_window in (("1m", 10), ("3m", 20)):
+            with self.subTest(stock_period=stock_period):
+                kpis = _macro_kpis(merged, stock_period=stock_period)
+
+                self.assertEqual(
+                    kpis["radar_usd_krw_excess_corr"]["status"], "available"
+                )
+                self.assertEqual(
+                    kpis["radar_usd_krw_sign_persistence"]["status"], "available"
+                )
+                self.assertEqual(
+                    kpis["radar_usd_krw_sign_persistence"]["window_days"],
+                    expected_window,
+                )
+                self.assertTrue(
+                    kpis["radar_usd_krw_judgement"]["value"].endswith(
+                        "(단기 참고)"
+                    )
+                )
+                self.assertEqual(
+                    kpis["radar_usd_krw_sign_switch_rate"]["value"], 0.0
+                )
+
+    def test_radar_stability_threshold_boundaries(self):
+        self.assertEqual(_radar_stability_label(80.0, 5.0), "안정")
+        self.assertEqual(_radar_stability_label(79.9, 5.0), "흔들림")
+        self.assertEqual(_radar_stability_label(80.0, 5.1), "흔들림")
+
+    def test_radar_keeps_exposure_when_rolling_observations_are_insufficient(self):
+        dates = pd.date_range("2026-08-03", periods=15, freq="B")
+        changes = np.linspace(-0.3, 0.3, len(dates) - 1)
+        returns = np.r_[0.0, changes]
+        prices = price_frame(
+            list(dates.strftime("%Y-%m-%d")),
+            list(100 * np.cumprod(1 + returns / 100)),
+        ).assign(시장구분="KOSPI")
+        fx_values = [1300.0]
+        for change in changes:
+            fx_values.append(fx_values[-1] * (1 + change / 100))
+        fx = prepare_macro_series(
+            [(day.date(), value) for day, value in zip(dates, fx_values)],
+            FX_COLUMN,
+        )
+        market_index = prepare_macro_series(
+            [
+                (day.date(), value)
+                for day, value in zip(
+                    dates,
+                    2500 * np.cumprod(1 + np.r_[0.0, -changes] / 100),
+                )
+            ],
+            MARKET_INDEX_COLUMN,
+        )
+
+        kpis = _macro_kpis(
+            merge_macro_with_prices(
+                prices,
+                fx=fx,
+                market_indices={"KOSPI": market_index},
+            ),
+            stock_period="1m",
+        )
+
+        self.assertEqual(kpis["radar_usd_krw_excess_corr"]["status"], "available")
+        self.assertEqual(
+            kpis["radar_usd_krw_sign_persistence"]["status"],
+            "no_comparison_period",
+        )
+        self.assertEqual(
+            kpis["radar_usd_krw_judgement"]["value"],
+            "노출 강 × 안정성 자료 부족",
+        )
 
 
 if __name__ == "__main__":

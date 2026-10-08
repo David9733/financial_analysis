@@ -8,8 +8,14 @@ from src.correlation_insight import (
 )
 
 
-def metric(value, status="available"):
-    return {"value": value, "unit": "", "status": status, "reason": None}
+def metric(value, status="available", **metadata):
+    return {
+        "value": value,
+        "unit": "",
+        "status": status,
+        "reason": None,
+        **metadata,
+    }
 
 
 def macro(
@@ -52,6 +58,64 @@ def full_macro(
 
 
 class CorrelationInsightTests(unittest.TestCase):
+    def test_macro_radar_prioritizes_market_difference_and_stability(self):
+        payload = full_macro()
+        payload.update(
+            {
+                "radar_usd_krw_market_corr": metric(0.05),
+                "radar_usd_krw_excess_corr": metric(0.35),
+                "radar_usd_krw_sign_persistence": metric(88.0),
+                "radar_usd_krw_sign_switches": metric(1),
+                "radar_usd_krw_sign_switch_rate": metric(2.0),
+                "radar_usd_krw_judgement": metric(
+                    "노출 강 × 안정", window_days=60, short_term=False
+                ),
+                "radar_treasury_3y_market_corr": metric(-0.4),
+                "radar_treasury_3y_excess_corr": metric(-0.1),
+                "radar_treasury_3y_sign_persistence": metric(None, "no_comparison_period"),
+                "radar_treasury_3y_sign_switches": metric(None, "no_comparison_period"),
+                "radar_treasury_3y_sign_switch_rate": metric(None, "no_comparison_period"),
+                "radar_treasury_3y_judgement": metric("노출 약 × 안정성 자료 부족"),
+            }
+        )
+
+        insight = build_correlation_insight(payload)
+
+        self.assertIn("매크로 레이더", insight)
+        self.assertIn("환율은 기업 r=+0.40, KOSPI r=+0.05, 시장 대비 +0.35", insight)
+        self.assertIn(
+            "60거래일 이동상관의 부호 유지율 88.0%·전환 1회·전환율 2.0%로 안정적",
+            insight,
+        )
+        self.assertIn("구조적 노출 후보", insight)
+        self.assertIn("인과관계나 미래 방향을 뜻하지 않습니다", insight)
+
+    def test_short_macro_radar_does_not_claim_structural_exposure(self):
+        payload = macro(0.6, None, rate_status="missing")
+        payload.update(
+            {
+                "market_index_name": metric("KOSPI"),
+                "market_index_change": metric(1.0),
+                "radar_usd_krw_market_corr": metric(0.1),
+                "radar_usd_krw_excess_corr": metric(0.5),
+                "radar_usd_krw_sign_persistence": metric(90.0),
+                "radar_usd_krw_sign_switches": metric(0),
+                "radar_usd_krw_sign_switch_rate": metric(0.0),
+                "radar_usd_krw_judgement": metric(
+                    "노출 강 × 안정 (단기 참고)",
+                    window_days=10,
+                    short_term=True,
+                ),
+            }
+        )
+
+        insight = build_correlation_insight(payload)
+
+        self.assertIn("10거래일 이동상관", insight)
+        self.assertIn("단기 조회", insight)
+        self.assertIn("더 긴 기간에서도 이어지는지 확인", insight)
+        self.assertNotIn("구조적 노출 후보", insight)
+
     def test_four_sign_combinations(self):
         cases = (
             (0.4, 0.5, "모두 과거 주가 상승 방향"),

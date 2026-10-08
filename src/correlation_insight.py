@@ -16,6 +16,16 @@ FACTOR_SETTINGS = (
     ("금리", "corr_return_treasury_3y", "treasury_3y_change_bp"),
     ("신용 스프레드", "corr_return_credit_spread", "credit_spread_change_bp"),
 )
+RADAR_FACTOR_SETTINGS = (
+    ("환율", "usd_krw", "corr_return_usd_krw", "usd_krw_change"),
+    ("금리", "treasury_3y", "corr_return_treasury_3y", "treasury_3y_change_bp"),
+    (
+        "신용 스프레드",
+        "credit_spread",
+        "corr_return_credit_spread",
+        "credit_spread_change_bp",
+    ),
+)
 
 
 def _available_number(metric: dict[str, Any] | None) -> float | None:
@@ -100,8 +110,131 @@ def _environment_text(
     return f"조회기간 실제 환경: {'·'.join(parts)}."
 
 
+def _build_macro_radar_insight(macro_kpi: dict[str, dict[str, Any]]) -> str | None:
+    """시장 대비 차이와 이동상관 안정성이 큰 요인부터 레이더 문장으로 요약한다."""
+    market_name = _available_text(macro_kpi.get("market_index_name")) or "시장지수"
+    radar_rows = []
+    for factor, prefix, company_key, change_key in RADAR_FACTOR_SETTINGS:
+        company_corr = _available_number(macro_kpi.get(company_key))
+        market_corr = _available_number(
+            macro_kpi.get(f"radar_{prefix}_market_corr")
+        )
+        excess_corr = _available_number(
+            macro_kpi.get(f"radar_{prefix}_excess_corr")
+        )
+        judgement_metric = macro_kpi.get(f"radar_{prefix}_judgement")
+        judgement = _available_text(judgement_metric)
+        if company_corr is None or market_corr is None or excess_corr is None or not judgement:
+            continue
+        radar_rows.append(
+            {
+                "factor": factor,
+                "prefix": prefix,
+                "company_corr": company_corr,
+                "market_corr": market_corr,
+                "excess_corr": excess_corr,
+                "judgement": judgement,
+                "base_judgement": judgement.replace(" (단기 참고)", ""),
+                "window_days": (
+                    judgement_metric.get("window_days") if judgement_metric else None
+                ),
+                "short_term": bool(
+                    judgement_metric.get("short_term") if judgement_metric else False
+                ),
+                "change": _available_number(macro_kpi.get(change_key)),
+                "persistence": _available_number(
+                    macro_kpi.get(f"radar_{prefix}_sign_persistence")
+                ),
+                "switches": _available_number(
+                    macro_kpi.get(f"radar_{prefix}_sign_switches")
+                ),
+                "switch_rate": _available_number(
+                    macro_kpi.get(f"radar_{prefix}_sign_switch_rate")
+                ),
+            }
+        )
+    if not radar_rows:
+        return None
+
+    radar_rows.sort(key=lambda row: abs(row["excess_corr"]), reverse=True)
+    focus_rows = radar_rows[:2]
+    descriptions = []
+    for row in focus_rows:
+        window_text = (
+            f"{int(row['window_days'])}거래일"
+            if row["window_days"] is not None
+            else "기간별"
+        )
+        stability_text = f"{window_text} 안정성은 자료 부족으로 판정을 유보합니다"
+        if (
+            row["persistence"] is not None
+            and row["switches"] is not None
+            and row["switch_rate"] is not None
+        ):
+            stability_text = (
+                f"{window_text} 이동상관의 부호 유지율 {row['persistence']:.1f}%·"
+                f"전환 {int(row['switches'])}회·전환율 {row['switch_rate']:.1f}%로 "
+                + (
+                    "안정적입니다"
+                    if row["base_judgement"].endswith("× 안정")
+                    else "관계가 흔들렸습니다"
+                )
+            )
+        descriptions.append(
+            f"{row['factor']}은 기업 r={row['company_corr']:+.2f}, "
+            f"{market_name} r={row['market_corr']:+.2f}, 시장 대비 "
+            f"{row['excess_corr']:+.2f}로 {row['judgement']}이며, {stability_text}"
+        )
+
+    strongest = radar_rows[0]
+    if strongest["base_judgement"] == "노출 강 × 안정" and strongest["short_term"]:
+        conclusion = (
+            f"{strongest['factor']}은 단기 조회에서 시장과 구별되는 관계가 일관되게 "
+            "나타난 노출 후보이며, 더 긴 기간에서도 이어지는지 확인할 필요가 있습니다."
+        )
+    elif strongest["base_judgement"] == "노출 강 × 안정":
+        conclusion = (
+            f"{strongest['factor']}은 시장과 구별되는 관계가 기간 중 비교적 꾸준해 "
+            "구조적 노출 후보로 추가 확인할 가치가 있습니다."
+        )
+    elif strongest["base_judgement"] == "노출 강 × 흔들림":
+        conclusion = (
+            f"{strongest['factor']}의 시장 대비 차이는 크지만 관계가 흔들려, "
+            "부호 전환 시점의 공시나 시장 사건을 확인할 필요가 있습니다."
+        )
+    elif "노출 약" in strongest["judgement"]:
+        conclusion = (
+            "확인된 요인 중 시장과 뚜렷이 구별되는 기업 고유 동행성은 제한적입니다."
+        )
+    else:
+        conclusion = (
+            f"가장 큰 시장 대비 차이는 {strongest['factor']}에서 나타났으며, "
+            "기업 고유 노출 여부는 다른 기간과 함께 확인할 필요가 있습니다."
+        )
+
+    changes = {
+        factor: _available_number(macro_kpi.get(change_key))
+        for factor, _, _, change_key in RADAR_FACTOR_SETTINGS
+    }
+    market_change = _available_number(macro_kpi.get("market_index_change"))
+    changes["시장지수"] = market_change
+    environment = _environment_text(
+        changes,
+        market_name,
+        {"시장지수", *(row["factor"] for row in radar_rows)},
+    )
+    return (
+        f"{environment} 매크로 레이더: {'; '.join(descriptions)}. {conclusion} "
+        "이는 선택기간의 과거 동행성과 시장 대비 차이이며 인과관계나 미래 방향을 뜻하지 않습니다."
+    )
+
+
 def build_correlation_insight(macro_kpi: dict[str, dict[str, Any]]) -> str:
     """실제 요인 방향과 기업 수익률 상관을 결합해 주가 방향 신호를 요약한다."""
+    radar_insight = _build_macro_radar_insight(macro_kpi)
+    if radar_insight is not None:
+        return radar_insight
+
     correlations: dict[str, float | None] = {}
     changes: dict[str, float | None] = {}
     active_factors = set()

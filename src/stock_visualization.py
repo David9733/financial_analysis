@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 
 if __package__:
+    from .correlation_settings import ROLLING_CORRELATION_SETTINGS
     from .data_quality import iqr_bounds, pair_valid
     from .macro_analysis import (
         CREDIT_SPREAD_CHANGE_BP_COLUMN,
@@ -46,6 +47,7 @@ if __package__:
     )
     from .visualization import COLORS, configure_korean_font
 else:
+    from correlation_settings import ROLLING_CORRELATION_SETTINGS
     from data_quality import iqr_bounds, pair_valid
     from macro_analysis import (
         CREDIT_SPREAD_CHANGE_BP_COLUMN,
@@ -674,15 +676,6 @@ def create_market_correlation_heatmaps(
             bbox_inches="tight",
         )
         plt.close(fig)
-
-
-ROLLING_CORRELATION_SETTINGS = {
-    "1m": ("1개월", 10, 10),
-    "3m": ("3개월", 20, 20),
-    "6m": ("6개월", 60, 60),
-    "1y": ("1년", 60, 60),
-    "3y": ("3년", 60, 60),
-}
 
 
 def _rolling_correlation(

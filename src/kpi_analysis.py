@@ -8,6 +8,10 @@ from typing import Any
 import pandas as pd
 
 if __package__:
+    from .correlation_settings import (
+        ROLLING_CORRELATION_SETTINGS,
+        SHORT_TERM_CORRELATION_PERIODS,
+    )
     from .data_quality import daily_change, pair_valid
     from .macro_analysis import (
         CREDIT_SPREAD_CHANGE_BP_COLUMN,
@@ -32,6 +36,10 @@ if __package__:
     )
     from .stock_analysis import add_bollinger_bands, add_moving_averages
 else:
+    from correlation_settings import (
+        ROLLING_CORRELATION_SETTINGS,
+        SHORT_TERM_CORRELATION_PERIODS,
+    )
     from data_quality import daily_change, pair_valid
     from macro_analysis import (
         CREDIT_SPREAD_CHANGE_BP_COLUMN,
@@ -60,6 +68,13 @@ else:
 # 1개월 조회에서도 주말·휴일·첫 변화량 행을 제외한 상관계수를 볼 수 있도록
 # 최소 표본을 10일로 둔다. 짧은 표본의 결과는 장기 결과보다 변동성이 크다.
 MIN_CORRELATION_OBSERVATIONS = 10
+RADAR_MIN_ROLLING_VALUES = 10
+RADAR_MIN_DIRECTIONAL_VALUES = 2
+RADAR_NEUTRAL_BAND = 0.1
+RADAR_MEDIUM_EXPOSURE_THRESHOLD = 0.15
+RADAR_STRONG_EXPOSURE_THRESHOLD = 0.3
+RADAR_STABLE_PERSISTENCE_THRESHOLD = 80.0
+RADAR_STABLE_MAX_SWITCH_RATE = 5.0
 MACRO_KPI_UNITS = {
     "usd_krw_latest": "원",
     "usd_krw_change": "%",
@@ -76,6 +91,24 @@ MACRO_KPI_UNITS = {
     "corr_return_credit_spread": "",
     "corr_usd_krw_treasury_3y_level": "",
     "corr_usd_krw_treasury_3y_change": "",
+    "radar_usd_krw_market_corr": "",
+    "radar_usd_krw_excess_corr": "",
+    "radar_usd_krw_sign_persistence": "%",
+    "radar_usd_krw_sign_switches": "회",
+    "radar_usd_krw_sign_switch_rate": "%",
+    "radar_usd_krw_judgement": "",
+    "radar_treasury_3y_market_corr": "",
+    "radar_treasury_3y_excess_corr": "",
+    "radar_treasury_3y_sign_persistence": "%",
+    "radar_treasury_3y_sign_switches": "회",
+    "radar_treasury_3y_sign_switch_rate": "%",
+    "radar_treasury_3y_judgement": "",
+    "radar_credit_spread_market_corr": "",
+    "radar_credit_spread_excess_corr": "",
+    "radar_credit_spread_sign_persistence": "%",
+    "radar_credit_spread_sign_switches": "회",
+    "radar_credit_spread_sign_switch_rate": "%",
+    "radar_credit_spread_judgement": "",
     "macro_filled_days": "일",
     "price_outlier_days": "일",
     "usd_krw_outlier_days": "일",
@@ -342,6 +375,190 @@ def _correlation(
     return float(pairs.corr(method="pearson").loc["first", "second"]), None, None
 
 
+def _radar_text_metric(
+    value: str | None,
+    *,
+    status: str = "available",
+    reason: str | None = None,
+) -> dict[str, Any]:
+    """매크로 레이더의 판정 문구를 KPI 상태 계약에 맞춰 반환한다."""
+    available = status == "available" and bool(value)
+    return {
+        "value": value if available else None,
+        "unit": "",
+        "status": "available" if available else status,
+        "reason": None if available else (reason or "레이더 판정에 필요한 데이터 없음"),
+    }
+
+
+def _radar_stability_label(
+    persistence: float,
+    switch_rate: float,
+) -> str:
+    """부호 유지율과 전환율로 이동상관 안정성을 판정한다."""
+    return (
+        "안정"
+        if persistence >= RADAR_STABLE_PERSISTENCE_THRESHOLD
+        and switch_rate <= RADAR_STABLE_MAX_SWITCH_RATE
+        else "흔들림"
+    )
+
+
+def _macro_radar_metrics(
+    prefix: str,
+    company_return: pd.Series,
+    market_return: pd.Series,
+    macro_change: pd.Series,
+    macro_pair_valid: pd.Series,
+    market_pair_valid: pd.Series,
+    company_corr: float | None,
+    company_corr_status: str | None,
+    company_corr_reason: str | None,
+    stock_period: str | None,
+) -> dict[str, dict[str, Any]]:
+    """기업-매크로 관계를 시장과 비교하고 60일 이동상관 안정성을 판정한다."""
+    market_valid = macro_pair_valid & market_pair_valid
+    market_corr, market_status, market_reason = _correlation(
+        market_return, macro_change, market_valid
+    )
+    market_observations = int(
+        pd.concat(
+            [market_return.where(market_valid), macro_change.where(market_valid)],
+            axis=1,
+        )
+        .dropna()
+        .shape[0]
+    )
+    market_metric = _metric(
+        market_corr,
+        "",
+        status=market_status,
+        reason=market_reason,
+    )
+    market_metric["observations"] = market_observations
+
+    excess_corr = (
+        company_corr - market_corr
+        if company_corr is not None and market_corr is not None
+        else None
+    )
+    unavailable_status = company_corr_status or market_status or "missing"
+    unavailable_reason = company_corr_reason or market_reason or "상관계수 데이터 없음"
+    excess_metric = _metric(
+        excess_corr,
+        "",
+        status=None if excess_corr is not None else unavailable_status,
+        reason=None if excess_corr is not None else unavailable_reason,
+    )
+
+    if excess_corr is None:
+        exposure = None
+    elif abs(excess_corr) >= RADAR_STRONG_EXPOSURE_THRESHOLD:
+        exposure = "강"
+    elif abs(excess_corr) >= RADAR_MEDIUM_EXPOSURE_THRESHOLD:
+        exposure = "중"
+    else:
+        exposure = "약"
+
+    stability_reason = None
+    persistence: float | None = None
+    switches: int | None = None
+    switch_rate: float | None = None
+    stability: str | None = None
+    rolling_setting = ROLLING_CORRELATION_SETTINGS.get(stock_period or "")
+    window = rolling_setting[1] if rolling_setting is not None else None
+    is_short_term = stock_period in SHORT_TERM_CORRELATION_PERIODS
+    if rolling_setting is None:
+        stability_reason = "지원하는 조회기간의 이동 상관 설정이 없음"
+    elif company_corr is None:
+        stability_reason = company_corr_reason or "기업-매크로 상관계수를 계산할 수 없음"
+    elif abs(company_corr) <= RADAR_NEUTRAL_BAND:
+        stability_reason = "전체기간 기업 상관이 중립 구간(-0.1~+0.1)에 있어 기준 부호가 불명확함"
+    else:
+        _, window, min_observations = rolling_setting
+        rolling = (
+            pd.to_numeric(company_return, errors="coerce")
+            .where(macro_pair_valid)
+            .rolling(
+                window=window,
+                min_periods=min_observations,
+            )
+            .corr(pd.to_numeric(macro_change, errors="coerce").where(macro_pair_valid))
+            .dropna()
+        )
+        if len(rolling) < RADAR_MIN_ROLLING_VALUES:
+            stability_reason = (
+                f"안정성 판정에 필요한 {window}거래일 이동 상관 관측치가 부족함"
+            )
+        else:
+            rolling_signs = pd.Series(0, index=rolling.index, dtype="int64")
+            rolling_signs[rolling > RADAR_NEUTRAL_BAND] = 1
+            rolling_signs[rolling < -RADAR_NEUTRAL_BAND] = -1
+            reference_sign = 1 if company_corr > 0 else -1
+            directional_signs = rolling_signs[rolling_signs != 0]
+            if len(directional_signs) < RADAR_MIN_DIRECTIONAL_VALUES:
+                stability_reason = "중립 구간을 제외한 방향성 이동 상관 관측치가 부족함"
+            else:
+                persistence = float((rolling_signs == reference_sign).mean() * 100)
+                switches = int(
+                    (directional_signs != directional_signs.shift()).sum() - 1
+                )
+                switch_opportunities = len(directional_signs) - 1
+                switch_rate = switches / switch_opportunities * 100
+                stability = _radar_stability_label(persistence, switch_rate)
+
+    stability_status = "available" if stability is not None else "no_comparison_period"
+    persistence_metric = _metric(
+        persistence,
+        "%",
+        digits=1,
+        status=None if persistence is not None else stability_status,
+        reason=stability_reason,
+    )
+    switches_metric = _metric(
+        switches,
+        "회",
+        digits=0,
+        status=None if switches is not None else stability_status,
+        reason=stability_reason,
+    )
+    switch_rate_metric = _metric(
+        switch_rate,
+        "%",
+        digits=1,
+        status=None if switch_rate is not None else stability_status,
+        reason=stability_reason,
+    )
+    stability_metrics = (persistence_metric, switches_metric, switch_rate_metric)
+    for metric in stability_metrics:
+        metric["window_days"] = window
+        metric["short_term"] = is_short_term
+    if exposure is None:
+        judgement = _radar_text_metric(
+            None,
+            status=unavailable_status,
+            reason=unavailable_reason,
+        )
+    elif stability is None:
+        judgement = _radar_text_metric(f"노출 {exposure} × 안정성 자료 부족")
+    else:
+        short_term_note = " (단기 참고)" if is_short_term else ""
+        judgement = _radar_text_metric(
+            f"노출 {exposure} × {stability}{short_term_note}"
+        )
+    judgement["window_days"] = window
+    judgement["short_term"] = is_short_term
+
+    return {
+        f"radar_{prefix}_market_corr": market_metric,
+        f"radar_{prefix}_excess_corr": excess_metric,
+        f"radar_{prefix}_sign_persistence": persistence_metric,
+        f"radar_{prefix}_sign_switches": switches_metric,
+        f"radar_{prefix}_sign_switch_rate": switch_rate_metric,
+        f"radar_{prefix}_judgement": judgement,
+    }
+
+
 def _change_column(data: pd.DataFrame, column: str, source: str, kind: str) -> pd.Series:
     """저장된 하루 변화 열을 쓰고, 없으면(이전 형식 데이터) 원천 값으로 계산한다."""
     if column in data:
@@ -349,7 +566,10 @@ def _change_column(data: pd.DataFrame, column: str, source: str, kind: str) -> p
     return daily_change(data[source], kind)
 
 
-def _macro_kpis(company_macro: pd.DataFrame | None) -> dict[str, dict]:
+def _macro_kpis(
+    company_macro: pd.DataFrame | None,
+    stock_period: str | None = None,
+) -> dict[str, dict]:
     """주식 거래일 기준 외부 요인의 기간 변화와 주가 연관성."""
     missing_reason = "외부 요인 원천 데이터 없음"
     if company_macro is None or company_macro.empty:
@@ -620,6 +840,38 @@ def _macro_kpis(company_macro: pd.DataFrame | None) -> dict[str, dict]:
     )
     result["corr_return_treasury_3y"]["observations"] = rate_corr_observations
     result["corr_return_credit_spread"]["observations"] = spread_corr_observations
+    for prefix, macro_change, macro_valid, company_corr_values in (
+        (
+            "usd_krw",
+            fx_daily_change,
+            fx_pair_valid,
+            (fx_corr, fx_corr_status, fx_corr_reason),
+        ),
+        (
+            "treasury_3y",
+            rate_daily_change,
+            rate_pair_valid,
+            (rate_corr, rate_corr_status, rate_corr_reason),
+        ),
+        (
+            "credit_spread",
+            spread_daily_change,
+            spread_pair_valid,
+            (spread_corr, spread_corr_status, spread_corr_reason),
+        ),
+    ):
+        result.update(
+            _macro_radar_metrics(
+                prefix,
+                returns,
+                market_index_daily_return,
+                macro_change,
+                macro_valid,
+                market_index_pair_valid,
+                *company_corr_values,
+                stock_period,
+            )
+        )
     return result
 
 
@@ -669,12 +921,13 @@ def build_kpi_payload(
                 "macro_kpi": _macro_kpis(
                     market_macro[market_macro["기업명"] == company_name]
                     if market_macro is not None and not market_macro.empty
-                    else None
+                    else None,
+                    stock_period=stock_period,
                 ),
             }
         )
     return {
-        "schema_version": "1.2",
+        "schema_version": "1.3",
         "generated_on": date.today().isoformat(),
         "companies": companies,
     }
