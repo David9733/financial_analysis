@@ -18,6 +18,8 @@
 - 일반기업, 금융업과 보험업을 구분한 재무 KPI
 - KOSPI, KOSDAQ, 환율, 금리와 신용 스프레드 분석
 - 기업 상관에서 시장 상관을 뺀 매크로 레이더
+- 계산된 KPI만 해석하는 GPT 기업 분석과 다중 기업 비교
+- GPT 호출 실패 시 검증된 KPI 기반 대체 인사이트 제공
 - 주가, 거래량, 투자자별 매수와 매도 비중 차트
 - 결측 보간, 단위 오류 보정과 IQR 이상치 기록
 - 원본 데이터 미리보기와 CSV 다운로드
@@ -35,7 +37,7 @@ https://github.com/user-attachments/assets/fd538833-aba5-4605-85de-0af79b1dd0b6
 | 재무 | 전체 재무 KPI와 연도별 재무 차트 |
 | 주가 | 주가 KPI, 정규화 주가 비교, 이동평균, 볼린저 밴드, 거래량과 투자자 비중 |
 | 매크로 | 시장 및 외부 요인, 매크로 레이더와 상관관계 차트 |
-| 요약 | 상관관계 종합 인사이트, 데이터 미리보기와 CSV 다운로드 |
+| 요약 | GPT 기업 분석, 기업 간 KPI 차이, 세부 분석 안의 상관관계 분석, 데이터 미리보기와 CSV 다운로드 |
 
 단일 기업에서는 KPI와 차트를 상세히 보여 주고, 다중 기업에서는 지표를 행, 기업을 열로 구성한 비교표와 첫 공통 거래일을 100으로 맞춘 주가 비교 차트를 제공합니다.
 
@@ -52,6 +54,8 @@ https://github.com/user-attachments/assets/fd538833-aba5-4605-85de-0af79b1dd0b6
 | 신용 스프레드 | 회사채 3년 AA- 금리에서 국고채 3년 금리를 뺀 값 | 한국은행 ECOS 자료로 계산 |
 
 투자자 데이터는 공식 네이버 API가 아닌 공개 응답 형식에 의존하므로 형식 변경 시 조회가 실패할 수 있습니다. 기업별 상관분석에는 해당 기업의 소속 시장지수만 사용합니다.
+
+GPT 자동 인사이트는 새로운 재무 데이터를 수집하지 않고 Python과 Pandas가 계산한 KPI만 해석합니다. 기업명과 KPI JSON은 OpenAI API 키가 설정된 경우 OpenAI로 전송됩니다.
 
 ## 🔬 분석 기준
 
@@ -136,7 +140,9 @@ OPENAI_API_KEY=your_openai_api_key
 OPENAI_MODEL=gpt-4o-mini
 ```
 
-`DART_KEY`는 재무분석에 필요합니다. 주가와 매크로 분석에는 각 데이터 제공처의 키가 필요합니다. 현재 GPT 자동 인사이트는 비활성화되어 있어 `OPENAI_API_KEY` 없이 실행할 수 있습니다.
+`DART_KEY`는 재무분석에 필수입니다. `PUBLIC_STOCK_API_KEY`가 없으면 주가와 시장지수 분석을 생략하며, `KOREAEXIM_API_KEY`와 `ECOS_API_KEY`가 없으면 해당 매크로 지표만 제외하고 가능한 분석을 계속합니다.
+
+GPT 자동 인사이트는 활성화되어 있습니다. `OPENAI_API_KEY`가 있으면 구조화된 GPT 분석을 생성하고 근거 KPI, 숫자와 금지 표현을 검증합니다. 키가 없거나 API 호출 및 검증이 실패하면 계산된 KPI 기반 대체 인사이트를 표시하므로 기본 재무분석은 계속 이용할 수 있습니다. `OPENAI_MODEL`을 생략하면 `gpt-4o-mini`를 사용합니다.
 
 ### 2. 설치와 실행
 
@@ -162,7 +168,7 @@ uv run --python 3.10 --isolated --with-requirements requirements.lock src/app.py
 .\.venv\Scripts\python.exe -m unittest discover -s tests
 ```
 
-전체 123개 테스트는 외부 API를 가짜 응답으로 대체하므로 네트워크와 API 키 없이 실행할 수 있습니다.
+전체 152개 테스트는 외부 API를 가짜 응답으로 대체하므로 네트워크와 API 키 없이 실행할 수 있습니다.
 
 ## 📤 생성 결과
 
@@ -176,9 +182,10 @@ uv run --python 3.10 --isolated --with-requirements requirements.lock src/app.py
 | `market_macro.csv` | 주가, 시장지수와 외부 요인의 수준값 및 변화량 |
 | `data_quality_log.csv` | 보간, 단위 보정과 이상치 처리 내역 |
 | `kpi_analysis.json` | 화면과 분석에 사용하는 KPI 스키마 1.6 |
+| `gpt_insights.json` | GPT 또는 KPI 기반 대체 인사이트와 다중 기업 비교 |
 | `charts/`, `stock_charts/` | 재무, 주가, 투자자와 매크로 차트 |
 
-데이터가 없는 선택 결과물은 생성되지 않을 수 있습니다. 완료된 웹 결과는 1시간 동안 보관한 뒤 새 분석이 완료될 때 정리합니다.
+데이터가 없는 선택 결과물은 생성되지 않을 수 있습니다. `gpt_insights.json`도 생성 가능한 인사이트가 있을 때만 저장됩니다. 완료된 웹 결과는 1시간 동안 보관한 뒤 새 분석이 완료될 때 정리합니다.
 
 ## 🧱 주요 소스
 
@@ -190,6 +197,9 @@ uv run --python 3.10 --isolated --with-requirements requirements.lock src/app.py
 | `src/stock_analysis.py` | 주가 정제, 이동평균과 볼린저 밴드 |
 | `src/macro_analysis.py` | 거래일 병합, 변화량, 보간과 이상치 |
 | `src/kpi_analysis.py` | KPI 스키마와 매크로 레이더 |
+| `src/gpt_analysis.py` | GPT 구조화 출력, KPI 근거 검증과 대체 인사이트 |
+| `src/analysis_prompt.py` | 재무, 시장과 시나리오 분석용 GPT 지침 |
+| `src/correlation_insight.py` | 기업별 시장 및 외부 요인 동행성 해석 |
 | `src/stock_visualization.py` | 주가, 투자자와 매크로 차트 |
 
 ## ⚠️ 해석 시 주의사항
