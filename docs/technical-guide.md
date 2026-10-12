@@ -7,13 +7,16 @@
 
 프로젝트 루트의 `.env.example`을 `.env`로 복사하고 사용할 키를 입력합니다.
 
-| 키 | 서비스 | 용도 |
-|---|---|---|
-| `DART_KEY` | Open DART | 기업 검색과 재무제표 |
-| `PUBLIC_STOCK_API_KEY` | 공공데이터포털 | 주식시세, KOSPI/KOSDAQ 지수 |
-| `KOREAEXIM_API_KEY` | 한국수출입은행 | 원/달러 환율 |
-| `ECOS_API_KEY` | 한국은행 ECOS | 국고채·회사채 금리 |
-| `OPENAI_API_KEY` | OpenAI | KPI 기반 보조 인사이트 |
+| 키 | 함께 인식하는 이름 | 서비스 | 용도 |
+|---|---|---|---|
+| `DART_KEY` | `DART_API_KEY` | [Open DART](https://opendart.fss.or.kr/) | 기업 검색과 재무제표 (필수) |
+| `PUBLIC_STOCK_API_KEY` | `STOCK_API_KEY` | [공공데이터포털](https://www.data.go.kr/) | 주식시세, KOSPI/KOSDAQ 지수 |
+| `KOREAEXIM_API_KEY` | `EXIM_API_KEY` | [한국수출입은행](https://www.koreaexim.go.kr/) | 원/달러 환율 |
+| `ECOS_API_KEY` | - | [한국은행 ECOS](https://ecos.bok.or.kr/api/) | 국고채·회사채 금리 |
+| `OPENAI_API_KEY` | `GPT_KEY` | [OpenAI](https://platform.openai.com/api-keys) | KPI 기반 보조 인사이트 |
+
+공공데이터포털에서는 금융위원회의 `주식시세정보`와 `지수시세정보` 두 서비스를 각각
+활용 신청해야 합니다. 이미 설정된 시스템 환경 변수는 `.env` 값보다 우선합니다.
 
 ```text
 DART_KEY=발급받은_Open_DART_API_키
@@ -37,12 +40,25 @@ uv run --python 3.10 --isolated --with-requirements requirements.lock src/app.py
 
 기본 주소는 `http://127.0.0.1:5000`이며 종료는 `Ctrl+C`입니다.
 
+| 입력 | 허용 범위 |
+|---|---|
+| 기업 수 | 1~10개 (쉼표, 세미콜론, 줄바꿈으로 구분하며 중복은 제거) |
+| 재무제표 조회기간 | 최근 1~10년 |
+| 주가 조회기간 | `1m`, `3m`, `6m`, `1y`, `3y` |
+
+| 경로 | 메서드 | 역할 |
+|---|---|---|
+| `/` | GET | 입력 화면 |
+| `/analyze` | POST | 분석 실행 후 결과 화면 반환 |
+| `/analysis-progress/<run_id>` | GET | 진행 단계와 진행률(JSON), 입력 화면이 주기적으로 조회 |
+| `/results/<run_id>/<파일 경로>` | GET | 해당 실행의 CSV와 차트 파일 |
+
 ### CLI
 
 `src/main.py` 상단의 기업명과 재무 조회기간을 수정합니다.
 
 ```python
-COMPANIES = ["삼성전자", "SK하이닉스"]
+COMPANIES = ["CJ프레시웨이", "롯데웰푸드"]
 START_YEAR = None
 END_YEAR = None
 NUMBER_OF_YEARS = 5
@@ -51,6 +67,10 @@ NUMBER_OF_YEARS = 5
 ```powershell
 uv run --python 3.10 --isolated --with-requirements requirements.lock src/main.py
 ```
+
+CLI의 주가 조회기간은 `1y`로 고정되어 있습니다. 다른 기간은 아래처럼 함수를 직접
+호출할 때 `stock_period`로 지정합니다. `START_YEAR`와 `END_YEAR`를 지정하면
+`NUMBER_OF_YEARS` 대신 해당 연도 범위를 조회합니다.
 
 Python 코드에서는 통합 함수를 직접 호출할 수 있습니다.
 
@@ -120,8 +140,10 @@ uv pip compile --python-version 3.10 requirements.txt -o requirements.lock
 ## 5. GPT 보조 분석
 
 Python/Pandas가 계산한 KPI JSON만 전달하며 GPT가 원천 숫자를 다시 계산하지 않습니다.
-응답의 근거 키와 수치를 검증하고 실패하면 최대 3회 재시도합니다. 사용할 수 없는 근거,
-입력에 없는 숫자와 투자 권유 표현은 안전한 문장으로 교체합니다.
+응답의 근거 키와 수치를 검증하고, 검증에 실패하면 실패 사유를 덧붙여 다시 요청합니다.
+첫 요청을 포함해 최대 3번까지 요청하며, 마지막 응답에서도 남은 사용할 수 없는 근거,
+입력에 없는 숫자와 투자 권유 표현은 안전한 문장으로 교체합니다. 인증, 한도 초과나
+네트워크 같은 API 오류는 다시 요청하지 않고 바로 KPI 기반 대체 인사이트로 전환합니다.
 
 응답 저장은 비활성화합니다. GPT가 실패하거나 사용 한도를 초과해도 재무·시장 KPI,
 CSV와 차트는 정상적으로 제공합니다.
@@ -153,19 +175,48 @@ output/
 src/
 ├── app.py                    # Flask 요청과 결과 화면
 ├── main.py                   # 통합 분석 파이프라인
+├── dart_api.py               # DART 기업 검색, 기업코드 캐시, 재무제표 API
 ├── financial_analysis.py     # 계정 매칭, 업종 판별, 재무지표
+├── visualization.py          # 재무 차트
 ├── stock_api.py              # 주식·시장지수 API
 ├── stock_analysis.py         # 주가 정제와 요약
+├── investor_analysis.py      # 투자자별 거래량 집계
 ├── macro_api.py              # 환율·금리 API
 ├── macro_analysis.py         # 거래일 병합과 변화량
 ├── data_quality.py           # 단위 보정과 이상치
-├── kpi_analysis.py           # KPI 계약
+├── kpi_analysis.py           # KPI 계약, 매크로 레이더, 시나리오
+├── correlation_settings.py   # 조회기간별 이동상관 창 설정
 ├── stock_visualization.py    # 시장 시각화
 ├── correlation_insight.py    # 히트맵 종합 인사이트
+├── analysis_prompt.py        # GPT 분석 지침
 └── gpt_analysis.py           # GPT 생성과 검증
 ```
 
-## 8. 보안과 운영 로그
+## 8. 문제 해결
+
+필수 데이터 오류는 입력 화면에 오류로 표시되고, 선택 데이터 오류는 결과 화면 상단의
+경고로 표시되며 나머지 분석은 계속됩니다.
+
+| 메시지 | 원인 | 조치 |
+|---|---|---|
+| `.env에 DART_KEY 또는 DART_API_KEY를 설정해 주세요` | DART 키 없음 | 프로젝트 루트에 `.env`를 만들고 `DART_KEY` 입력 |
+| `입력한 기업명 '…'을(를) 찾을 수 없습니다. 비슷한 기업: …` | 오타 또는 비상장 법인명 | 제안된 기업명 중 하나로 다시 입력 |
+| `기업명 '…' 검색 결과가 여러 개입니다: …` | 같은 이름의 법인이 여러 개 | 목록에 표시된 정확한 법인명 입력 |
+| `분석 가능한 재무 데이터를 가져오지 못했습니다` | 해당 기간 사업보고서 없음 | 조회기간을 늘리거나 다른 기업 확인 |
+| `DART API 오류: status=020` 등 | DART 키 오류 또는 호출 한도 | [DART 오류 코드](https://opendart.fss.or.kr/)와 키 상태 확인 |
+| `…: 상장 종목코드가 없어 재무분석만 제공합니다` | 비상장 기업 | 정상 동작, 주가·매크로 분석 없음 |
+| `.env에 PUBLIC_STOCK_API_KEY를 설정해 주세요` | 주가 키 없음 | 키 입력 또는 재무분석만 사용 |
+| `주식시세 API 오류: code=…` | 서비스 미승인 또는 키 오류 | 공공데이터포털에서 두 서비스 활용 승인 여부 확인 |
+| `환율 API 일일 호출 한도(1,000건)를 초과했습니다` | 처음 3년 조회 등으로 호출이 많음 | 다음 날 다시 실행, 이미 받은 날짜는 캐시되어 재호출하지 않음 |
+| `환율 API 인증키가 유효하지 않습니다` | 수출입은행 키 오류 | 키 확인 |
+| `환율: N개 날짜 조회에 실패해 직전 값으로 채웠습니다` | 일부 날짜 일시 오류 | 다시 실행하면 실패한 날짜만 재호출 |
+| `…: 투자자별 수급 조회 실패` | 비공식 응답 형식 변경 또는 네트워크 | 투자자 차트만 제외, 나머지는 정상 |
+| `GPT 자동 분석을 불러오지 못했습니다` | OpenAI 키 없음, 한도 초과 또는 검증 실패 | KPI 기반 대체 인사이트가 표시되며 키와 사용량 확인 |
+
+캐시가 손상되었거나 최신 기업 목록이 필요하면 `.cache/` 폴더를 삭제하고 다시
+실행합니다. 기업코드는 다시 내려받고, 환율은 조회 기간만큼 다시 호출합니다.
+
+## 9. 보안과 운영 로그
 
 - `.env`, API 키, 캐시와 생성 결과는 Git 추적 대상에서 제외합니다.
 - 서버는 기본적으로 `127.0.0.1`, `debug=False`로 실행합니다.
