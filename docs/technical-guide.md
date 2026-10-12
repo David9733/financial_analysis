@@ -12,7 +12,7 @@
 | `DART_KEY` | `DART_API_KEY` | [Open DART](https://opendart.fss.or.kr/) | 기업 검색과 재무제표 (필수) |
 | `PUBLIC_STOCK_API_KEY` | `STOCK_API_KEY` | [공공데이터포털](https://www.data.go.kr/) | 주식시세, KOSPI/KOSDAQ 지수 |
 | `KOREAEXIM_API_KEY` | `EXIM_API_KEY` | [한국수출입은행](https://www.koreaexim.go.kr/) | 원/달러 환율 |
-| `ECOS_API_KEY` | - | [한국은행 ECOS](https://ecos.bok.or.kr/api/) | 국고채·회사채 금리 |
+| `ECOS_API_KEY` | - | [한국은행 ECOS](https://ecos.bok.or.kr/api/) | 국고채와 회사채 금리 |
 | `OPENAI_API_KEY` | `GPT_KEY` | [OpenAI](https://platform.openai.com/api-keys) | KPI 기반 보조 인사이트 |
 
 공공데이터포털에서는 금융위원회의 `주식시세정보`와 `지수시세정보` 두 서비스를 각각
@@ -114,7 +114,7 @@ uv pip compile --python-version 3.10 requirements.txt -o requirements.lock
 
 ### 공공데이터포털 금융위원회
 
-- 일별 주식의 시가·고가·저가·종가·거래량·거래대금·시가총액을 사용합니다.
+- 일별 주식의 시가, 고가, 저가, 종가, 거래량, 거래대금과 시가총액을 사용합니다.
 - KOSPI와 KOSDAQ 일별 지수 종가를 수집합니다.
 - 데이터는 일 1회 적재되므로 최근 종가는 실시간 체결가가 아닙니다.
 
@@ -134,8 +134,8 @@ uv pip compile --python-version 3.10 requirements.txt -o requirements.lock
 
 ### 투자자별 거래 동향
 
-최근 최대 10거래일의 기관·개인·외국인·기타 매수 거래량 비중을 계산합니다. 거래량
-차트의 빨강·파랑은 실제 매수·매도 분리가 아니라 시가 대비 종가 방향 표시입니다.
+최근 최대 10거래일의 기관, 개인, 외국인과 기타 매수 거래량 비중을 계산합니다. 거래량
+차트의 빨강과 파랑은 실제 매수와 매도 분리가 아니라 시가 대비 종가 방향 표시입니다.
 
 ## 5. GPT 보조 분석
 
@@ -145,7 +145,7 @@ Python/Pandas가 계산한 KPI JSON만 전달하며 GPT가 원천 숫자를 다�
 입력에 없는 숫자와 투자 권유 표현은 안전한 문장으로 교체합니다. 인증, 한도 초과나
 네트워크 같은 API 오류는 다시 요청하지 않고 바로 KPI 기반 대체 인사이트로 전환합니다.
 
-응답 저장은 비활성화합니다. GPT가 실패하거나 사용 한도를 초과해도 재무·시장 KPI,
+응답 저장은 비활성화합니다. GPT가 실패하거나 사용 한도를 초과해도 재무 및 시장 KPI,
 CSV와 차트는 정상적으로 제공합니다.
 
 ## 6. 출력 구조
@@ -178,10 +178,10 @@ src/
 ├── dart_api.py               # DART 기업 검색, 기업코드 캐시, 재무제표 API
 ├── financial_analysis.py     # 계정 매칭, 업종 판별, 재무지표
 ├── visualization.py          # 재무 차트
-├── stock_api.py              # 주식·시장지수 API
+├── stock_api.py              # 주식과 시장지수 API
 ├── stock_analysis.py         # 주가 정제와 요약
 ├── investor_analysis.py      # 투자자별 거래량 집계
-├── macro_api.py              # 환율·금리 API
+├── macro_api.py              # 환율과 금리 API
 ├── macro_analysis.py         # 거래일 병합과 변화량
 ├── data_quality.py           # 단위 보정과 이상치
 ├── kpi_analysis.py           # KPI 계약, 매크로 레이더, 시나리오
@@ -204,7 +204,7 @@ src/
 | `기업명 '…' 검색 결과가 여러 개입니다: …` | 같은 이름의 법인이 여러 개 | 목록에 표시된 정확한 법인명 입력 |
 | `분석 가능한 재무 데이터를 가져오지 못했습니다` | 해당 기간 사업보고서 없음 | 조회기간을 늘리거나 다른 기업 확인 |
 | `DART API 오류: status=020` 등 | DART 키 오류 또는 호출 한도 | [DART 오류 코드](https://opendart.fss.or.kr/)와 키 상태 확인 |
-| `…: 상장 종목코드가 없어 재무분석만 제공합니다` | 비상장 기업 | 정상 동작, 주가·매크로 분석 없음 |
+| `…: 상장 종목코드가 없어 재무분석만 제공합니다` | 비상장 기업 | 정상 동작, 주가와 매크로 분석 없음 |
 | `.env에 PUBLIC_STOCK_API_KEY를 설정해 주세요` | 주가 키 없음 | 키 입력 또는 재무분석만 사용 |
 | `주식시세 API 오류: code=…` | 서비스 미승인 또는 키 오류 | 공공데이터포털에서 두 서비스 활용 승인 여부 확인 |
 | `환율 API 일일 호출 한도(1,000건)를 초과했습니다` | 처음 3년 조회 등으로 호출이 많음 | 다음 날 다시 실행, 이미 받은 날짜는 캐시되어 재호출하지 않음 |
@@ -222,7 +222,7 @@ src/
 - 서버는 기본적으로 `127.0.0.1`, `debug=False`로 실행합니다.
 - 사용자 입력을 셸 명령으로 실행하지 않습니다.
 - 실행 로그에는 API 키나 전체 KPI 대신 `run_id`, 단계, 기업 수, 경고 수와 처리시간을 기록합니다.
-- 외부 서비스에는 해당 요청에 필요한 기업·종목·날짜와 인증키만 전송합니다.
+- 외부 서비스에는 해당 요청에 필요한 기업, 종목, 날짜와 인증키만 전송합니다.
 - OpenAI 분석 시 기업명과 KPI JSON이 전송되지만 API 키는 요청 본문이나 로그에 남기지 않습니다.
 
 인터넷 공개 배포 시에는 사용자 인증, 요청 제한, HTTPS, 운영용 WSGI 서버와 별도 결과
