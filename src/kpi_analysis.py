@@ -75,6 +75,10 @@ RADAR_MEDIUM_EXPOSURE_THRESHOLD = 0.15
 RADAR_STRONG_EXPOSURE_THRESHOLD = 0.3
 RADAR_STABLE_PERSISTENCE_THRESHOLD = 80.0
 RADAR_STABLE_MAX_SWITCH_RATE = 5.0
+WEAK_KRW_FX_CHANGE_THRESHOLD = 0.3
+RISING_RATE_CHANGE_BP_THRESHOLD = 3.0
+SCENARIO_LIMITED_SAMPLE_DAYS = 5
+SCENARIO_REFERENCE_SAMPLE_DAYS = 10
 MACRO_KPI_UNITS = {
     "usd_krw_latest": "원",
     "usd_krw_change": "%",
@@ -109,6 +113,12 @@ MACRO_KPI_UNITS = {
     "radar_credit_spread_sign_switches": "회",
     "radar_credit_spread_sign_switch_rate": "%",
     "radar_credit_spread_judgement": "",
+    "weak_krw_rising_rate_days": "일",
+    "weak_krw_rising_rate_sample_quality": "",
+    "weak_krw_rising_rate_company_return": "%",
+    "weak_krw_rising_rate_market_return": "%",
+    "weak_krw_rising_rate_excess_return": "%p",
+    "weak_krw_rising_rate_judgement": "",
     "macro_filled_days": "일",
     "price_outlier_days": "일",
     "usd_krw_outlier_days": "일",
@@ -122,6 +132,10 @@ OUTLIER_KPI_COLUMNS = {
     "market_index_outlier_days": MARKET_INDEX_OUTLIER_COLUMN,
     "treasury_3y_outlier_days": RATE_OUTLIER_COLUMN,
     "credit_spread_outlier_days": CREDIT_SPREAD_OUTLIER_COLUMN,
+}
+LOWER_IS_BETTER_FINANCIAL_KPIS = {
+    "debt_ratio",
+    "accounts_receivable_days",
 }
 
 
@@ -167,6 +181,67 @@ def _safe_ratio(numerator: Any, denominator: Any) -> float | None:
     if pd.isna(numerator) or pd.isna(denominator) or float(denominator) == 0:
         return None
     return float(numerator) / float(denominator) * 100
+
+
+def _financial_trends(financial_history: list[dict[str, Any]]) -> dict[str, dict]:
+    """최근 3개 연속 사업연도의 KPI 방향을 개선, 악화, 보합 또는 변동으로 판정한다."""
+    ordered = sorted(financial_history, key=lambda item: int(item["period"]))
+    latest_kpis = ordered[-1]["financial_kpi"] if ordered else {}
+    result: dict[str, dict] = {}
+
+    for key, latest_metric in latest_kpis.items():
+        if latest_metric.get("status") == "not_applicable":
+            result[key] = {
+                "value": None,
+                "unit": "",
+                "status": "not_applicable",
+                "reason": latest_metric.get("reason"),
+            }
+            continue
+
+        recent = ordered[-3:]
+        periods = [int(item["period"]) for item in recent]
+        metrics = [item["financial_kpi"].get(key, {}) for item in recent]
+        values = [metric.get("value") for metric in metrics]
+        consecutive = len(periods) == 3 and periods[1] - periods[0] == 1 and periods[2] - periods[1] == 1
+        available = all(
+            metric.get("status") == "available"
+            and value is not None
+            and not isinstance(value, str)
+            for metric, value in zip(metrics, values)
+        )
+        if not consecutive or not available:
+            result[key] = {
+                "value": None,
+                "unit": "",
+                "status": "no_comparison_period",
+                "reason": "추세 판정에 필요한 최근 3개 연속 사업연도 값이 없음",
+            }
+            continue
+
+        numeric_values = [float(value) for value in values]
+        adjusted = (
+            [-value for value in numeric_values]
+            if key in LOWER_IS_BETTER_FINANCIAL_KPIS
+            else numeric_values
+        )
+        if adjusted[0] == adjusted[1] == adjusted[2]:
+            judgement = "보합"
+        elif adjusted[0] <= adjusted[1] <= adjusted[2]:
+            judgement = "개선"
+        elif adjusted[0] >= adjusted[1] >= adjusted[2]:
+            judgement = "악화"
+        else:
+            judgement = "변동"
+        result[key] = {
+            "value": judgement,
+            "unit": "",
+            "status": "available",
+            "reason": None,
+            "periods": [str(period) for period in periods],
+            "values": numeric_values,
+        }
+    return result
 
 
 def _financial_kpis(company_rows: pd.DataFrame) -> tuple[int, str, dict[str, dict]]:
@@ -410,6 +485,108 @@ def _radar_stability_label(
         and switch_rate <= RADAR_STABLE_MAX_SWITCH_RATE
         else "흔들림"
     )
+
+
+def _weak_krw_rising_rate_scenario(
+    company_return: pd.Series,
+    market_return: pd.Series,
+    fx_change: pd.Series,
+    rate_change_pp: pd.Series,
+    valid: pd.Series,
+) -> dict[str, dict[str, Any]]:
+    """원화 약세와 금리 상승이 동시에 나타난 거래일의 시장 대비 성과."""
+    pairs = pd.DataFrame(
+        {
+            "company": company_return,
+            "market": market_return,
+            "fx": fx_change,
+            "rate_pp": rate_change_pp,
+        }
+    )[valid].dropna()
+    keys = {
+        "weak_krw_rising_rate_days": "일",
+        "weak_krw_rising_rate_company_return": "%",
+        "weak_krw_rising_rate_market_return": "%",
+        "weak_krw_rising_rate_excess_return": "%p",
+    }
+    if pairs.empty:
+        reason = "시나리오 분석에 필요한 기업, 시장지수, 환율 또는 금리 데이터 없음"
+        result = {
+            key: _metric(None, unit, status="missing", reason=reason)
+            for key, unit in keys.items()
+        }
+        result["weak_krw_rising_rate_judgement"] = _radar_text_metric(
+            None, status="missing", reason=reason
+        )
+        result["weak_krw_rising_rate_sample_quality"] = _radar_text_metric(
+            None, status="missing", reason=reason
+        )
+        return result
+
+    scenario = pairs[
+        (pairs["fx"] >= WEAK_KRW_FX_CHANGE_THRESHOLD)
+        & (pairs["rate_pp"] * 100 >= RISING_RATE_CHANGE_BP_THRESHOLD)
+    ]
+    days = len(scenario)
+    if days == 0:
+        reason = "선택 기간에 환율 +0.3% 이상 및 금리 +3bp 이상인 거래일 없음"
+        result = {
+            "weak_krw_rising_rate_days": _metric(0, "일", digits=0),
+            "weak_krw_rising_rate_company_return": _metric(
+                None, "%", status="no_comparison_period", reason=reason
+            ),
+            "weak_krw_rising_rate_market_return": _metric(
+                None, "%", status="no_comparison_period", reason=reason
+            ),
+            "weak_krw_rising_rate_excess_return": _metric(
+                None, "%p", status="no_comparison_period", reason=reason
+            ),
+            "weak_krw_rising_rate_judgement": _radar_text_metric(
+                None, status="no_comparison_period", reason=reason
+            ),
+            "weak_krw_rising_rate_sample_quality": _radar_text_metric(
+                None, status="no_comparison_period", reason=reason
+            ),
+        }
+        return result
+
+    company_average = float(scenario["company"].mean())
+    market_average = float(scenario["market"].mean())
+    excess_average = float((scenario["company"] - scenario["market"]).mean())
+    if excess_average > 0:
+        judgement = (
+            "시장보다 덜 하락"
+            if company_average < 0
+            else "시장 대비 양호"
+        )
+    elif excess_average < 0:
+        judgement = (
+            "시장보다 더 하락"
+            if company_average < 0
+            else "시장 대비 부진"
+        )
+    else:
+        judgement = "시장과 유사"
+
+    return {
+        "weak_krw_rising_rate_days": _metric(days, "일", digits=0),
+        "weak_krw_rising_rate_sample_quality": _radar_text_metric(
+            _scenario_sample_quality(days)
+        ),
+        "weak_krw_rising_rate_company_return": _metric(company_average, "%"),
+        "weak_krw_rising_rate_market_return": _metric(market_average, "%"),
+        "weak_krw_rising_rate_excess_return": _metric(excess_average, "%p"),
+        "weak_krw_rising_rate_judgement": _radar_text_metric(judgement),
+    }
+
+
+def _scenario_sample_quality(days: int) -> str:
+    """시나리오 발생일 수를 해석 강도가 아닌 표본 주의 수준으로 분류한다."""
+    if days < SCENARIO_LIMITED_SAMPLE_DAYS:
+        return "표본 매우 적음"
+    if days < SCENARIO_REFERENCE_SAMPLE_DAYS:
+        return "제한적 표본"
+    return "과거 참고 가능"
 
 
 def _macro_radar_metrics(
@@ -875,6 +1052,15 @@ def _macro_kpis(
     )
     result["corr_return_treasury_3y"]["observations"] = rate_corr_observations
     result["corr_return_credit_spread"]["observations"] = spread_corr_observations
+    result.update(
+        _weak_krw_rising_rate_scenario(
+            returns,
+            market_index_daily_return,
+            fx_daily_change,
+            rate_daily_change,
+            fx_pair_valid & rate_pair_valid & market_index_pair_valid,
+        )
+    )
     for prefix, macro_change, macro_valid, company_corr_values in (
         (
             "usd_krw",
@@ -923,8 +1109,9 @@ def build_kpi_payload(
     stock_period: str,
     market_macro: pd.DataFrame | None = None,
     volume_history: pd.DataFrame | None = None,
+    financial_trend_source: pd.DataFrame | None = None,
 ) -> dict[str, Any]:
-    """기업별 최신 재무연도와 선택 주가기간의 KPI JSON을 만든다."""
+    """최신 재무 KPI와 별도로 확보한 최근 3개년 추세를 KPI JSON으로 만든다."""
     companies = []
     for company_name, rows in financial.groupby("기업명", sort=False):
         period, analysis_type, financial_kpi = _financial_kpis(rows)
@@ -936,6 +1123,21 @@ def build_kpi_payload(
             )
             financial_history.append(
                 {"period": str(history_period), "financial_kpi": history_kpis}
+            )
+        trend_rows = ordered_rows
+        if financial_trend_source is not None and not financial_trend_source.empty:
+            company_trend_rows = financial_trend_source[
+                financial_trend_source["기업명"] == company_name
+            ]
+            if not company_trend_rows.empty:
+                trend_rows = company_trend_rows.sort_values("연도").reset_index(drop=True)
+        trend_history = []
+        for index in range(len(trend_rows)):
+            trend_period, _, trend_kpis = _financial_kpis(
+                trend_rows.iloc[: index + 1]
+            )
+            trend_history.append(
+                {"period": str(trend_period), "financial_kpi": trend_kpis}
             )
         company_prices = (
             stock_prices[stock_prices["기업명"] == company_name]
@@ -956,6 +1158,7 @@ def build_kpi_payload(
                     str(int(value)) for value in ordered_rows["연도"].tolist()
                 ],
                 "financial_history": financial_history,
+                "financial_trend": _financial_trends(trend_history),
                 "stock_period": stock_period,
                 "financial_kpi": financial_kpi,
                 "market_kpi": _market_kpis(company_prices, company_volume_history),
@@ -968,7 +1171,7 @@ def build_kpi_payload(
             }
         )
     return {
-        "schema_version": "1.4",
+        "schema_version": "1.6",
         "generated_on": date.today().isoformat(),
         "companies": companies,
     }

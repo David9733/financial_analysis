@@ -131,6 +131,12 @@ KPI_LABELS = {
     "market_index_outlier_days": "시장지수 하루 변화 이상치",
     "treasury_3y_outlier_days": "금리 하루 변화 이상치",
     "credit_spread_outlier_days": "신용 스프레드 하루 변화 이상치",
+    "weak_krw_rising_rate_days": "금리 상승·원화 약세 거래일",
+    "weak_krw_rising_rate_sample_quality": "시나리오 표본 수준",
+    "weak_krw_rising_rate_company_return": "해당일 기업 평균 수익률",
+    "weak_krw_rising_rate_market_return": "해당일 시장 평균 수익률",
+    "weak_krw_rising_rate_excess_return": "시장 대비 평균 차이",
+    "weak_krw_rising_rate_judgement": "시나리오 판정",
 }
 KPI_HELP_TEXT = {
     "revenue_growth": (
@@ -268,6 +274,25 @@ KPI_HELP_TEXT = {
         "주식 거래일에 시장지수, 환율, 국고채 및 회사채 관측값이 없어 직전 값(첫 구간은 다음 값)으로 "
         "채운 날짜 수입니다. 보간된 구간은 상관계수와 이상치 계산에서 제외됩니다."
     ),
+    "weak_krw_rising_rate_days": (
+        "원·달러 환율 일간 변화율이 +0.3% 이상이고 국고채 3년 금리가 "
+        "+3bp 이상 상승한 거래일 수입니다. 기준을 충족한 날이 없어도 임의로 기준을 낮추지 않습니다."
+    ),
+    "weak_krw_rising_rate_sample_quality": (
+        "발생일이 1~4일이면 표본 매우 적음, 5~9일이면 제한적 표본, "
+        "10일 이상이면 과거 참고 가능으로 표시합니다. 미래 예측의 신뢰도 등급은 아닙니다."
+    ),
+    "weak_krw_rising_rate_company_return": "시나리오 조건을 충족한 날의 기업 일간 수익률 평균입니다.",
+    "weak_krw_rising_rate_market_return": (
+        "같은 날 해당 기업의 소속 시장지수(KOSPI 또는 KOSDAQ) 일간 수익률 평균입니다."
+    ),
+    "weak_krw_rising_rate_excess_return": (
+        "기업 평균 수익률 - 시장 평균 수익률입니다. 양수면 시장보다 높고, 음수면 낮습니다."
+    ),
+    "weak_krw_rising_rate_judgement": (
+        "시장 대비 평균 차이의 부호와 기업 평균 수익률을 함께 사용한 과거 기간 요약입니다. "
+        "미래 수익률 예측이나 투자 권유가 아닙니다."
+    ),
 }
 KPI_WARNING_KEYS = {"corr_usd_krw_treasury_3y_level"}
 MACRO_RADAR_TABLE_KEYS = (
@@ -289,6 +314,14 @@ MACRO_RADAR_JUDGEMENT_KEYS = (
     ("금리", "radar_treasury_3y_judgement"),
     ("신용 스프레드", "radar_credit_spread_judgement"),
 )
+SCENARIO_TABLE_KEYS = (
+    "weak_krw_rising_rate_days",
+    "weak_krw_rising_rate_sample_quality",
+    "weak_krw_rising_rate_company_return",
+    "weak_krw_rising_rate_market_return",
+    "weak_krw_rising_rate_excess_return",
+    "weak_krw_rising_rate_judgement",
+)
 MACRO_TABLE_HIDDEN_KEYS = {
     "corr_return_usd_krw",
     "corr_return_treasury_3y",
@@ -300,7 +333,7 @@ MACRO_TABLE_HIDDEN_KEYS = {
     "radar_usd_krw_market_corr",
     "radar_treasury_3y_market_corr",
     "radar_credit_spread_market_corr",
-} | set(MACRO_RADAR_TABLE_KEYS) | {
+} | set(MACRO_RADAR_TABLE_KEYS) | set(SCENARIO_TABLE_KEYS) | {
     key for _, key in MACRO_RADAR_JUDGEMENT_KEYS
 }
 
@@ -585,6 +618,30 @@ def build_headline_kpi_matrix(payload: dict) -> dict:
     return build_kpi_matrix(payload, "financial_kpi", keys)
 
 
+def build_financial_kpi_matrix(payload: dict) -> dict:
+    """재무 KPI 최신값에 최근 3개 연속 사업연도의 추세 배지를 결합한다."""
+    matrix = build_kpi_matrix(payload, "financial_kpi", hide_not_applicable=True)
+    companies = payload.get("companies", [])
+    for row in matrix["rows"]:
+        badges = []
+        tones = []
+        for company in companies:
+            trend = company.get("financial_trend", {}).get(row["key"], {})
+            badge = trend.get("value") if trend.get("status") == "available" else ""
+            badges.append(badge or "")
+            tones.append(
+                {
+                    "개선": "improving",
+                    "악화": "worsening",
+                    "보합": "steady",
+                    "변동": "volatile",
+                }.get(badge, "unavailable")
+            )
+        row["badges"] = badges
+        row["badge_tones"] = tones
+    return matrix
+
+
 def build_macro_radar_matrix(payload: dict) -> dict:
     """화면에 실제 존재하는 매크로 레이더 KPI만 고정 순서로 묶는다."""
     companies = payload.get("companies", [])
@@ -666,6 +723,8 @@ def _kpi_lookup(payload: dict) -> dict[str, dict[str, dict]]:
         metrics.update(company.get("financial_kpi", {}))
         metrics.update(company.get("market_kpi", {}))
         metrics.update(company.get("macro_kpi", {}))
+        for key, metric in company.get("financial_trend", {}).items():
+            metrics[f"financial_trend.{key}"] = metric
         for history in company.get("financial_history", []):
             period = history.get("period")
             for key, metric in history.get("financial_kpi", {}).items():
@@ -675,6 +734,9 @@ def _kpi_lookup(payload: dict) -> dict[str, dict[str, dict]]:
 
 
 def _kpi_label(metric_key: str) -> str:
+    if metric_key.startswith("financial_trend."):
+        base_key = metric_key.split(".", 1)[1]
+        return f"3년 추세 {KPI_LABELS.get(base_key, base_key)}"
     if metric_key.startswith("financial_history."):
         _, period, base_key = metric_key.split(".", 2)
         return f"{period}년 {KPI_LABELS.get(base_key, base_key)}"
@@ -714,9 +776,15 @@ def build_gpt_cards(insights: list[dict], comparisons: list[dict], payload: dict
             "stability",
             "efficiency",
             "market",
+            "financial_scenario",
             "overall_summary",
         ):
-            section = insight[section_name]
+            section = insight.get(section_name)
+            if section is None:
+                section = {
+                    "summary": "제시된 재무 체질과 시나리오 반응의 일치 여부를 확인할 수 있습니다.",
+                    "evidence_keys": [],
+                }
             card[section_name] = format_section(section)
         for section_list_name in (
             "relationships_and_mismatches",
@@ -1134,9 +1202,7 @@ def analyze():
         kpi_cards=kpi_cards,
         headline_kpi_cards=headline_kpi_cards,
         headline_kpi_matrix=build_headline_kpi_matrix(integrated.kpi_payload),
-        financial_kpi_matrix=build_kpi_matrix(
-            integrated.kpi_payload, "financial_kpi", hide_not_applicable=True
-        ),
+        financial_kpi_matrix=build_financial_kpi_matrix(integrated.kpi_payload),
         market_kpi_matrix=build_kpi_matrix(
             integrated.kpi_payload, "market_kpi"
         ),
@@ -1148,6 +1214,9 @@ def analyze():
         macro_radar_matrix=build_macro_radar_matrix(integrated.kpi_payload),
         macro_radar_summaries=build_macro_radar_summaries(
             integrated.kpi_payload
+        ),
+        scenario_matrix=build_kpi_matrix(
+            integrated.kpi_payload, "macro_kpi", keys=SCENARIO_TABLE_KEYS
         ),
         market_overview=build_market_overview_cards(integrated.market_overview),
         gpt_insights=gpt_insight_cards,

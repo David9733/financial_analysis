@@ -49,6 +49,13 @@ def _available_text(metric: dict[str, Any] | None) -> str | None:
     return value or None
 
 
+def _with_topic_particle(text: str) -> str:
+    """마지막 한글 음절의 받침 여부에 맞춰 은 또는 는을 붙인다."""
+    code = ord(text[-1])
+    has_final_consonant = 0xAC00 <= code <= 0xD7A3 and (code - 0xAC00) % 28 != 0
+    return f"{text}{'은' if has_final_consonant else '는'}"
+
+
 def _correlation_strength(value: float | None) -> str:
     if value is None:
         return "계산 불가"
@@ -181,7 +188,7 @@ def _build_macro_radar_insight(macro_kpi: dict[str, dict[str, Any]]) -> str | No
                 )
             )
         descriptions.append(
-            f"{row['factor']}은 기업 r={row['company_corr']:+.2f}, "
+            f"{_with_topic_particle(row['factor'])} 기업 r={row['company_corr']:+.2f}, "
             f"{market_name} r={row['market_corr']:+.2f}, 시장 대비 "
             f"{row['excess_corr']:+.2f}로 "
             f"{row['base_judgement'].split(' × ')[0]}"
@@ -191,12 +198,12 @@ def _build_macro_radar_insight(macro_kpi: dict[str, dict[str, Any]]) -> str | No
     strongest = radar_rows[0]
     if strongest["base_judgement"] == "노출 강 × 안정" and strongest["short_term"]:
         conclusion = (
-            f"{strongest['factor']}은 단기 조회에서 시장과 구별되는 관계가 일관되게 "
+            f"{_with_topic_particle(strongest['factor'])} 단기 조회에서 시장과 구별되는 관계가 일관되게 "
             "나타난 노출 후보이며, 더 긴 기간에서도 이어지는지 확인할 필요가 있습니다."
         )
     elif strongest["base_judgement"] == "노출 강 × 안정":
         conclusion = (
-            f"{strongest['factor']}은 시장과 구별되는 관계가 기간 중 비교적 꾸준해 "
+            f"{_with_topic_particle(strongest['factor'])} 시장과 구별되는 관계가 기간 중 비교적 꾸준해 "
             "구조적 노출 후보로 추가 확인할 가치가 있습니다."
         )
     elif strongest["base_judgement"] == "노출 강 × 흔들림":

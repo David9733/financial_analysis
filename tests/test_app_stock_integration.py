@@ -121,6 +121,7 @@ class AppStockIntegrationTests(unittest.TestCase):
             ],
         )
 
+    @patch("src.app.ENABLE_GPT_INSIGHTS", False)
     @patch("src.app.run_integrated_analysis")
     def test_result_page_renders_stock_and_financial_sections(self, run_analysis):
         run_analysis.return_value = self.fake_result()
@@ -155,6 +156,24 @@ class AppStockIntegrationTests(unittest.TestCase):
         self.assertIn("kpi-help-item", response.get_data(as_text=True))
         self.assertNotIn("외부 요인 (환율, 금리)", response.get_data(as_text=True))
         run_analysis.assert_called_once()
+
+    @patch("src.app.ENABLE_GPT_INSIGHTS", True)
+    @patch("src.app.run_integrated_analysis")
+    def test_result_page_renders_enabled_gpt_insights(self, run_analysis):
+        run_analysis.return_value = self.fake_result()
+
+        response = self.client.post(
+            "/analyze",
+            data={"company": "삼성전자", "number_of_years": "5", "stock_period": "1y"},
+        )
+        html = response.get_data(as_text=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("종합 인사이트", html)
+        self.assertIn("GPT 기업 분석", html)
+        self.assertIn("한줄 핵심 요약", html)
+        self.assertIn("재무 체질과 시나리오 반응", html)
+        self.assertIn("종합 분석 요약", html)
 
     def test_requested_financial_and_market_kpis_have_help_text(self):
         requested = {
@@ -274,8 +293,12 @@ class AppStockIntegrationTests(unittest.TestCase):
 
         html = response.get_data(as_text=True)
         self.assertEqual(response.status_code, 200)
-        self.assertNotIn("<h3>종합 인사이트</h3>", html)
-        self.assertIn("상관관계 종합 인사이트", html)
+        self.assertIn('<h2 id="combined-insights-title">종합 인사이트</h2>', html)
+        self.assertIn("상관관계 분석", html)
+        details_start = html.index("삼성전자 세부 분석 펼치기")
+        correlation_start = html.index("상관관계 분석", details_start)
+        details_end = html.index("</details>", details_start)
+        self.assertLess(correlation_start, details_end)
         self.assertIn("핵심 판정", html)
         self.assertNotIn("상관관계 판정 기준", html)
         self.assertNotIn("data-show-correlation-criteria", html)
@@ -505,6 +528,7 @@ class AppStockIntegrationTests(unittest.TestCase):
         self.assertEqual(progress.get_json()["stage"], "complete")
         self.assertEqual(progress.get_json()["percent"], 100)
 
+    @patch("src.app.ENABLE_GPT_INSIGHTS", False)
     @patch("src.app.run_integrated_analysis")
     def test_multi_company_result_uses_comparison_dashboard(self, run_analysis):
         result = self.fake_result()

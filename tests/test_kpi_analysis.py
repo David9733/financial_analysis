@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import Mock
 
 import pandas as pd
 
 from src.financial_analysis import FINAL_COLUMNS, select_output_periods
-from src.kpi_analysis import build_kpi_payload
+from src.kpi_analysis import _financial_trends, build_kpi_payload
+from src.main import _query_years
 
 
 class KPIAnalysisTests(unittest.TestCase):
@@ -72,7 +74,7 @@ class KPIAnalysisTests(unittest.TestCase):
         )
         company = payload["companies"][0]
 
-        self.assertEqual(payload["schema_version"], "1.4")
+        self.assertEqual(payload["schema_version"], "1.6")
         self.assertEqual(company["financial_period"], "2025")
         self.assertAlmostEqual(company["financial_kpi"]["net_margin"]["value"], 8.33)
         self.assertAlmostEqual(company["financial_kpi"]["roa"]["value"], 11.11)
@@ -90,6 +92,95 @@ class KPIAnalysisTests(unittest.TestCase):
             company["financial_history"][0]["financial_kpi"]["roe"]["value"],
             12.0,
         )
+        self.assertEqual(
+            company["financial_trend"]["roe"]["status"],
+            "no_comparison_period",
+        )
+
+    def test_financial_trends_use_metric_direction_and_three_consecutive_years(self):
+        history = []
+        for period, margin, debt, roe, growth in (
+            (2023, 8.0, 80.0, 10.0, 5.0),
+            (2024, 9.0, 70.0, 8.0, 5.0),
+            (2025, 10.0, 60.0, 11.0, 5.0),
+        ):
+            history.append(
+                {
+                    "period": str(period),
+                    "financial_kpi": {
+                        "operating_margin": {
+                            "value": margin,
+                            "status": "available",
+                        },
+                        "debt_ratio": {"value": debt, "status": "available"},
+                        "roe": {"value": roe, "status": "available"},
+                        "revenue_growth": {
+                            "value": growth,
+                            "status": "available",
+                        },
+                    },
+                }
+            )
+
+        trends = _financial_trends(history)
+
+        self.assertEqual(trends["operating_margin"]["value"], "개선")
+        self.assertEqual(trends["debt_ratio"]["value"], "개선")
+        self.assertEqual(trends["roe"]["value"], "변동")
+        self.assertEqual(trends["revenue_growth"]["value"], "보합")
+        self.assertEqual(trends["operating_margin"]["periods"], ["2023", "2024", "2025"])
+
+    def test_one_year_output_uses_separate_three_year_trend_source(self):
+        trend_source = self.financial_frame()
+        year_2023 = trend_source.iloc[0].copy()
+        year_2023["연도"] = 2023
+        year_2023["영업이익률"] = 8.0
+        year_2023["부채비율"] = 55.0
+        year_2023["ROE"] = 11.0
+        trend_source = pd.concat(
+            [year_2023.to_frame().T, trend_source], ignore_index=True
+        )
+        displayed = trend_source.tail(1).copy()
+
+        payload = build_kpi_payload(
+            displayed,
+            pd.DataFrame(),
+            "1m",
+            financial_trend_source=trend_source,
+        )
+        company = payload["companies"][0]
+
+        self.assertEqual(company["financial_periods"], ["2025"])
+        self.assertEqual(len(company["financial_history"]), 1)
+        self.assertEqual(company["financial_trend"]["operating_margin"]["value"], "개선")
+        self.assertEqual(
+            company["financial_trend"]["operating_margin"]["periods"],
+            ["2023", "2024", "2025"],
+        )
+
+    def test_one_year_query_collects_enough_history_for_three_year_trend(self):
+        client = Mock()
+        client.get_annual_financials.return_value = ([], "CFS")
+
+        collected = _query_years(client, "001", "테스트전자", None, None, 1)
+
+        self.assertEqual(len(collected), 4)
+        self.assertEqual(client.get_annual_financials.call_count, 4)
+
+    def test_financial_trends_reject_nonconsecutive_years(self):
+        history = [
+            {
+                "period": str(period),
+                "financial_kpi": {
+                    "roe": {"value": value, "status": "available"}
+                },
+            }
+            for period, value in ((2022, 8.0), (2024, 9.0), (2025, 10.0))
+        ]
+
+        trend = _financial_trends(history)["roe"]
+
+        self.assertEqual(trend["status"], "no_comparison_period")
 
     def test_volume_history_only_changes_recent_volume_kpi(self):
         history = self.stock_frame().copy()

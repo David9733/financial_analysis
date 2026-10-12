@@ -11,6 +11,7 @@ from src.kpi_analysis import (
     _macro_kpis,
     _macro_radar_metrics,
     _radar_stability_label,
+    _scenario_sample_quality,
 )
 from src.macro_analysis import (
     CORPORATE_BOND_COLUMN,
@@ -436,6 +437,100 @@ class MacroKPITests(unittest.TestCase):
         self.assertAlmostEqual(
             kpis["corr_usd_krw_treasury_3y_change"]["value"], 1.0, places=2
         )
+
+    def test_weak_krw_rising_rate_scenario_compares_with_company_market(self):
+        dates = pd.date_range("2026-01-02", periods=6, freq="B")
+        company_returns = np.array([0.0, 1.0, -1.0, 2.0, -2.0, 3.0])
+        market_returns = np.array([0.0, 0.5, 0.2, 1.0, -1.0, 1.0])
+        fx_changes = np.array([0.0, 0.4, 0.4, 0.35, -0.1, 0.31])
+        rate_changes_pp = np.array([0.0, 0.04, 0.01, 0.05, -0.02, 0.031])
+
+        company_closes = 100 * np.cumprod(1 + company_returns / 100)
+        market_levels = 2500 * np.cumprod(1 + market_returns / 100)
+        fx_levels = 1300 * np.cumprod(1 + fx_changes / 100)
+        rate_levels = 3.0 + np.cumsum(rate_changes_pp)
+        prices = price_frame(
+            list(dates.strftime("%Y-%m-%d")), list(company_closes)
+        ).assign(시장구분="KOSPI")
+
+        kpis = _macro_kpis(
+            merge_macro_with_prices(
+                prices,
+                fx=prepare_macro_series(
+                    list(zip(dates.date, fx_levels)), FX_COLUMN
+                ),
+                rate=prepare_macro_series(
+                    list(zip(dates.date, rate_levels)), RATE_COLUMN
+                ),
+                market_indices={
+                    "KOSPI": prepare_macro_series(
+                        list(zip(dates.date, market_levels)), MARKET_INDEX_COLUMN
+                    )
+                },
+            )
+        )
+
+        self.assertEqual(kpis["weak_krw_rising_rate_days"]["value"], 3)
+        self.assertEqual(
+            kpis["weak_krw_rising_rate_sample_quality"]["value"],
+            "표본 매우 적음",
+        )
+        self.assertEqual(
+            kpis["weak_krw_rising_rate_company_return"]["value"], 2.0
+        )
+        self.assertEqual(
+            kpis["weak_krw_rising_rate_market_return"]["value"], 0.83
+        )
+        self.assertEqual(
+            kpis["weak_krw_rising_rate_excess_return"]["value"], 1.17
+        )
+        self.assertEqual(
+            kpis["weak_krw_rising_rate_judgement"]["value"], "시장 대비 양호"
+        )
+
+    def test_weak_krw_rising_rate_scenario_keeps_fixed_thresholds(self):
+        dates = pd.date_range("2026-01-02", periods=5, freq="B")
+        prices = price_frame(list(dates.strftime("%Y-%m-%d"))).assign(
+            시장구분="KOSDAQ"
+        )
+        unchanged_fx = prepare_macro_series(
+            [(day.date(), 1300.0) for day in dates], FX_COLUMN
+        )
+        unchanged_rate = prepare_macro_series(
+            [(day.date(), 3.0) for day in dates], RATE_COLUMN
+        )
+        market = prepare_macro_series(
+            [(day.date(), 800.0 + index) for index, day in enumerate(dates)],
+            MARKET_INDEX_COLUMN,
+        )
+
+        kpis = _macro_kpis(
+            merge_macro_with_prices(
+                prices,
+                fx=unchanged_fx,
+                rate=unchanged_rate,
+                market_indices={"KOSDAQ": market},
+            )
+        )
+
+        self.assertEqual(kpis["weak_krw_rising_rate_days"]["value"], 0)
+        self.assertEqual(
+            kpis["weak_krw_rising_rate_company_return"]["status"],
+            "no_comparison_period",
+        )
+        self.assertEqual(
+            kpis["weak_krw_rising_rate_judgement"]["status"],
+            "no_comparison_period",
+        )
+        self.assertEqual(
+            kpis["weak_krw_rising_rate_sample_quality"]["status"],
+            "no_comparison_period",
+        )
+
+    def test_scenario_sample_quality_uses_fixed_day_bands(self):
+        self.assertEqual(_scenario_sample_quality(1), "표본 매우 적음")
+        self.assertEqual(_scenario_sample_quality(5), "제한적 표본")
+        self.assertEqual(_scenario_sample_quality(10), "과거 참고 가능")
 
     def test_short_period_has_no_correlation(self):
         prices = price_frame(["2026-03-02", "2026-03-03", "2026-03-04"])

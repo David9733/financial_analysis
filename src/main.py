@@ -35,7 +35,7 @@ if __package__:  # ``python -m src.main`` 또는 패키지 import
         QualityLog,
         correct_scale_errors,
     )
-    from .gpt_analysis import GPTAnalysisError, analyze_kpis
+    from .gpt_analysis import GPTAnalysisError, analyze_kpis, build_fallback_insights
     from .kpi_analysis import build_kpi_payload
     from .macro_analysis import (
         CORPORATE_BOND_COLUMN,
@@ -86,7 +86,7 @@ else:  # ``python src/main.py``로 직접 실행
         QualityLog,
         correct_scale_errors,
     )
-    from gpt_analysis import GPTAnalysisError, analyze_kpis
+    from gpt_analysis import GPTAnalysisError, analyze_kpis, build_fallback_insights
     from kpi_analysis import build_kpi_payload
     from macro_analysis import (
         CORPORATE_BOND_COLUMN,
@@ -137,7 +137,7 @@ STOCK_PERIOD_DAYS = {
     "3y": 1096,
 }
 VOLUME_CHANGE_LOOKBACK_CALENDAR_DAYS = 70
-ENABLE_GPT_INSIGHTS = False
+ENABLE_GPT_INSIGHTS = True
 LOGGER = logging.getLogger(__name__)
 ProgressCallback = Callable[[str, int, str], None]
 
@@ -472,12 +472,14 @@ def _query_years(
     if start_year is not None or end_year is not None:
         first = start_year if start_year is not None else max(2015, (end_year or date.today().year) - number_of_years + 1)
         last = end_year if end_year is not None else date.today().year
-        # 평균자본과 평균매출채권 계산에 필요한 직전 연도도 내부적으로 조회한다.
-        candidate_years = range(last, max(2014, first - 1) - 1, -1)
+        # 화면 조회기간과 별개로 최신 3개 사업연도의 추세를 계산한다. 각 연도 KPI의
+        # 평균자본과 성장률 계산에 필요한 직전 연도까지 내부적으로 조회한다.
+        trend_first = min(first, last - 2)
+        candidate_years = range(last, max(2014, trend_first - 1) - 1, -1)
         required_count = None
     else:
         candidate_years = range(date.today().year, 2014, -1)
-        required_count = number_of_years + 1
+        required_count = max(number_of_years + 1, 4)
 
     for year in candidate_years:
         response = client.get_annual_financials(corp_code, year)
@@ -563,6 +565,8 @@ def run_analysis(
 
     # 통합 분석이 DART 기업 목록을 다시 받지 않고 종목코드를 재사용한다.
     result.attrs["resolved_companies"] = resolved_companies
+    trend_financial = select_output_periods(all_metrics, number_of_years=3)
+    result.attrs["trend_financial_records"] = trend_financial.to_dict("records")
 
     result_path = target_output_dir / "financial_analysis.csv"
     # utf-8-sig는 Excel에서도 한글 CSV가 깨지지 않도록 BOM을 포함한다.
@@ -600,6 +604,12 @@ def run_integrated_analysis(
         progress_callback=progress_callback,
     )
     resolved_companies = financial.attrs.get("resolved_companies", [])
+    trend_records = financial.attrs.get("trend_financial_records", [])
+    trend_financial = (
+        pd.DataFrame.from_records(trend_records, columns=financial.columns)
+        if trend_records
+        else financial
+    )
     warnings: list[str] = []
     price_frames: list[pd.DataFrame] = []
     volume_history_frames: list[pd.DataFrame] = []
@@ -747,6 +757,7 @@ def run_integrated_analysis(
         stock_period,
         market_macro=market_macro,
         volume_history=volume_history,
+        financial_trend_source=trend_financial,
     )
     (target_output_dir / "kpi_analysis.json").write_text(
         json.dumps(kpi_payload, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -768,6 +779,20 @@ def run_integrated_analysis(
                 time.monotonic() - gpt_started_at,
                 error,
             )
+            try:
+                fallback_result = build_fallback_insights(kpi_payload)
+            except GPTAnalysisError as fallback_error:
+                LOGGER.warning(
+                    "gpt_fallback_failed company_count=%d error=%s",
+                    len(kpi_payload.get("companies", [])),
+                    fallback_error,
+                )
+            else:
+                gpt_insights = fallback_result["analyses"]
+                gpt_comparisons = fallback_result["comparisons"]
+                warnings.append(
+                    "GPT 응답 대신 계산된 KPI 기반 대체 인사이트를 표시합니다."
+                )
         else:
             LOGGER.info(
                 "gpt_analysis_completed company_count=%d comparison_count=%d elapsed_seconds=%.2f",

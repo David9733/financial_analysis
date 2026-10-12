@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from src.correlation_insight import (
+    _with_topic_particle,
     build_company_correlation_insights,
     build_correlation_insight,
 )
@@ -167,6 +168,10 @@ class CorrelationInsightTests(unittest.TestCase):
         )
         self.assertIn("주가–시장지수 r=+0.75(강함)", insight)
         self.assertIn("주가–신용 스프레드 r=-0.80(강함)", insight)
+
+    def test_credit_spread_uses_correct_topic_particle(self):
+        self.assertEqual(_with_topic_particle("신용 스프레드"), "신용 스프레드는")
+        self.assertEqual(_with_topic_particle("환율"), "환율은")
 
     def test_only_medium_or_strong_nonflat_signals_enter_conclusion(self):
         insight = build_correlation_insight(

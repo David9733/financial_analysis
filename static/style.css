@@ -647,7 +647,15 @@ tbody tr:hover { background: #f7faff; }
 .headline-kpi-list dd { margin: 8px 0 0; color: #191f28; font-size: 20px; font-weight: 800; }
 .insight-heading { margin-top: 42px; }
 .summary-data-heading { margin-top: 48px; }
+.insight-subheading { display: flex; justify-content: space-between; gap: 24px; align-items: flex-end; margin: 32px 0 18px; }
+.insight-subheading h3 { margin: 0; font-size: 22px; letter-spacing: -.035em; }
+.insight-subheading span { color: #8b95a1; font-size: 13px; }
+.insight-subheading .eyebrow { margin-bottom: 6px; }
+.insight-group-title { margin: 24px 0 14px; color: #333d4b; font-size: 16px; }
+.company-analysis-title { margin-top: 0; }
+.correlation-subheading { margin-top: 48px; padding-top: 40px; border-top: 1px solid #e5e8eb; }
 .comparison-insight-card { padding: 24px; }
+.comparison-insight-grid { margin-bottom: 36px; }
 .comparison-insight-card > p:first-child { margin-top: 0; color: #333d4b; line-height: 1.75; }
 .summary-insight-card { align-self: start; }
 .correlation-insight-card { padding: 28px; }
@@ -659,11 +667,17 @@ tbody tr:hover { background: #f7faff; }
 .correlation-conclusion { padding: 18px; border-radius: 16px; background: #f7f8fa; }
 .correlation-conclusion p { margin-bottom: 0; color: #191f28; font-weight: 700; }
 .correlation-notice { margin: 20px 0 0; padding-top: 18px; border-top: 1px solid #e5e8eb; color: #8b95a1 !important; font-size: 12px; }
+.detail-correlation-analysis { margin-top: 28px; padding-top: 26px; border-top: 1px solid #e5e8eb; }
+.detail-correlation-analysis > .eyebrow { margin-bottom: 6px; }
+.detail-correlation-analysis > h4 { margin-top: 0; }
+.detail-correlation-analysis section { margin-top: 18px; }
+.detail-correlation-analysis h5 { margin: 0 0 8px; color: #333d4b; font-size: 14px; }
+.detail-correlation-analysis .correlation-conclusion { padding: 18px; border-radius: 16px; background: #f7f8fa; }
 .signal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .signal-grid section { padding: 18px; border-radius: 16px; background: #f7f8fa; }
 .insight-details { margin-top: 24px; border-top: 1px solid #e5e8eb; }
 .insight-details summary { padding: 20px 0 0; color: #1b64da; font-weight: 700; cursor: pointer; }
-.insight-details-body { padding-top: 2px; }
+.insight-details-body { padding-top: 18px; }
 
 .comparison-block { margin-bottom: 26px; padding: 26px; border-radius: 24px; background: #fff; box-shadow: var(--shadow); }
 .radar-summary-list { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
@@ -674,6 +688,13 @@ tbody tr:hover { background: #f7faff; }
 .single-kpi-table th, .single-kpi-table td { width: 12.5%; padding: 16px 12px; vertical-align: middle; }
 .single-kpi-table th { position: relative; color: #4e5968; background: #f7f8fa; text-align: left; }
 .single-kpi-table td { color: #191f28; background: #fff; font-weight: 800; text-align: right; overflow-wrap: anywhere; }
+.kpi-value-with-trend { display: inline-flex; align-items: center; justify-content: flex-end; gap: 10px; white-space: nowrap; }
+.financial-trend-badge { flex: 0 0 auto; padding: 5px 8px; border-radius: 999px; font-size: 11px; font-weight: 800; line-height: 1; }
+.financial-trend-badge.is-improving { color: #08785d; background: #e8faf4; }
+.financial-trend-badge.is-worsening { color: #c32635; background: #fff0f1; }
+.financial-trend-badge.is-steady { color: #4e5968; background: #f2f4f6; }
+.financial-trend-badge.is-volatile { color: #9a6700; background: #fff6e5; }
+.comparison-table td .kpi-value-with-trend { width: 100%; }
 .kpi-label-tail { white-space: nowrap; }
 #panel-macro .single-kpi-table th { width: 14%; }
 #panel-macro .single-kpi-table td { width: 11%; }
@@ -731,6 +752,10 @@ tbody tr:hover { background: #f7faff; }
 }
 
 @media (max-width: 680px) {
+  .comparison-insight-grid { margin-bottom: 28px; }
+  .insight-subheading { align-items: flex-start; flex-direction: column; gap: 8px; }
+  .correlation-subheading { margin-top: 36px; padding-top: 30px; }
+  .insight-details-body { padding-top: 14px; }
   .result-page .results-shell { width: min(100% - 28px, 1280px); padding-top: 30px; }
   .dashboard-header { gap: 18px; }
   .market-overview-grid, .company-snapshot-grid, .result-chart-grid, .company-chart-grid { grid-template-columns: 1fr; }

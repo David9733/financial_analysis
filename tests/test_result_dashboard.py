@@ -9,9 +9,11 @@ import pandas as pd
 
 from src.app import (
     MACRO_TABLE_HIDDEN_KEYS,
+    SCENARIO_TABLE_KEYS,
     build_headline_kpi_cards,
     build_headline_kpi_matrix,
     build_csv_preview,
+    build_financial_kpi_matrix,
     build_kpi_matrix,
     build_macro_radar_matrix,
     build_macro_radar_summaries,
@@ -26,6 +28,35 @@ def metric(value, unit="%", status="available") -> dict:
 
 
 class ResultDashboardViewModelTests(unittest.TestCase):
+    def test_financial_kpi_matrix_combines_value_and_trend_badge(self):
+        payload = {
+            "companies": [
+                {
+                    "company": "삼성전자",
+                    "financial_kpi": {
+                        "operating_margin": metric(13.07),
+                        "debt_ratio": metric(29.94),
+                        "roe": metric(10.78),
+                    },
+                    "financial_trend": {
+                        "operating_margin": metric("개선", ""),
+                        "debt_ratio": metric("악화", ""),
+                        "roe": metric(None, "", "no_comparison_period"),
+                    },
+                }
+            ]
+        }
+
+        matrix = build_financial_kpi_matrix(payload)
+        rows = {row["key"]: row for row in matrix["rows"]}
+
+        self.assertEqual(rows["operating_margin"]["values"], ["13.07%"])
+        self.assertEqual(rows["operating_margin"]["badges"], ["개선"])
+        self.assertEqual(rows["operating_margin"]["badge_tones"], ["improving"])
+        self.assertEqual(rows["debt_ratio"]["badges"], ["악화"])
+        self.assertEqual(rows["debt_ratio"]["badge_tones"], ["worsening"])
+        self.assertEqual(rows["roe"]["badges"], [""])
+
     def test_csv_preview_keeps_all_columns_and_only_first_five_rows(self):
         frame = pd.DataFrame(
             {"첫째 열": range(7), "둘째 열": [f"값 {index}" for index in range(7)]}
@@ -155,9 +186,16 @@ class ResultDashboardViewModelTests(unittest.TestCase):
             exclude_keys=MACRO_TABLE_HIDDEN_KEYS,
         )
         radar = build_macro_radar_matrix(payload)
+        scenario = build_kpi_matrix(
+            payload, "macro_kpi", keys=SCENARIO_TABLE_KEYS
+        )
         summaries = build_macro_radar_summaries(payload)
 
         self.assertEqual([row["key"] for row in external["rows"]], ["usd_krw_latest"])
+        self.assertEqual(
+            [row["key"] for row in scenario["rows"]],
+            list(SCENARIO_TABLE_KEYS),
+        )
         self.assertEqual(
             [row["key"] for row in radar["rows"]],
             [
