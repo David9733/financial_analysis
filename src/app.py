@@ -51,6 +51,7 @@ COMPLETED_MARKER_NAME = ".completed"
 GPT_WEB_TIMEOUT_SECONDS = 10.0
 VERCEL_INLINE_CHART_MAX_WIDTH = 1200
 VERCEL_INLINE_CHART_QUALITY = 78
+VERCEL_INLINE_PNG_BUDGET_BYTES = 2_200_000
 STOCK_PERIOD_LABELS = {
     "1m": "1개월",
     "3m": "3개월",
@@ -1020,10 +1021,19 @@ def _stock_chart_group(filename: str) -> str:
     return "correlation"
 
 
-def build_chart_url(path: Path, run_id: str, folder: str) -> str:
+def build_chart_url(
+    path: Path,
+    run_id: str,
+    folder: str,
+    compress_inline: bool = True,
+) -> str:
     """Vercel에서는 임시 파일 대신 압축된 차트를 HTML에 직접 포함한다."""
     if not os.getenv("VERCEL"):
         return url_for("run_file", run_id=run_id, filename=f"{folder}/{path.name}")
+
+    if not compress_inline:
+        encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+        return f"data:image/png;base64,{encoded}"
 
     try:
         with Image.open(path) as source:
@@ -1103,7 +1113,11 @@ def build_csv_preview(
 
 
 def build_stock_chart_items(
-    chart_paths: list[Path], run_id: str, stock_summary, payload: dict
+    chart_paths: list[Path],
+    run_id: str,
+    stock_summary,
+    payload: dict,
+    compress_inline: bool = True,
 ) -> list[dict]:
     """차트 URL에 기업별 히트맵 인사이트를 연결한다."""
     insight_by_company = build_company_correlation_insights(payload)
@@ -1126,7 +1140,12 @@ def build_stock_chart_items(
                 break
         items.append(
             {
-                "url": build_chart_url(path, run_id, "stock_charts"),
+                "url": build_chart_url(
+                    path,
+                    run_id,
+                    "stock_charts",
+                    compress_inline=compress_inline,
+                ),
                 "filename": path.name,
                 "insight": insight,
                 "insight_sections": build_correlation_insight_sections(insight),
@@ -1285,17 +1304,30 @@ def analyze():
         for _, row in display.iterrows()
     ]
     charts_dir = run_dir / "charts"
-    chart_files = sorted(path.name for path in charts_dir.glob("*.png"))
-    chart_urls = [
-        build_chart_url(charts_dir / filename, run_id, "charts")
-        for filename in chart_files
-    ]
+    chart_paths = sorted(charts_dir.glob("*.png"))
     stock_charts_dir = run_dir / "stock_charts"
+    stock_chart_paths = sorted(stock_charts_dir.glob("*.png"))
+    chart_bytes = sum(
+        path.stat().st_size for path in [*chart_paths, *stock_chart_paths]
+    )
+    compress_inline_charts = bool(
+        os.getenv("VERCEL") and chart_bytes > VERCEL_INLINE_PNG_BUDGET_BYTES
+    )
+    chart_urls = [
+        build_chart_url(
+            path,
+            run_id,
+            "charts",
+            compress_inline=compress_inline_charts,
+        )
+        for path in chart_paths
+    ]
     stock_chart_items = build_stock_chart_items(
-        sorted(stock_charts_dir.glob("*.png")),
+        stock_chart_paths,
         run_id,
         integrated.stock_summary,
         integrated.kpi_payload,
+        compress_inline=compress_inline_charts,
     )
     stock_comparison_charts = [
         item for item in stock_chart_items if item.get("group") == "comparison"

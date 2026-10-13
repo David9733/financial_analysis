@@ -298,6 +298,20 @@ class AppStockIntegrationTests(unittest.TestCase):
 
         self.assertTrue(chart_url.startswith("data:image/webp;base64,"))
 
+    def test_small_vercel_chart_skips_slow_reencoding(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "chart.png"
+            Image.new("RGB", (40, 30), "white").save(path)
+            with patch.dict(os.environ, {"VERCEL": "1"}), app.test_request_context():
+                chart_url = build_chart_url(
+                    path,
+                    "a" * 32,
+                    "charts",
+                    compress_inline=False,
+                )
+
+        self.assertTrue(chart_url.startswith("data:image/png;base64,"))
+
     @patch("src.app.analyze_kpis")
     def test_async_gpt_endpoint_returns_completed_fragment(self, analyze_kpis):
         result = self.fake_result()
@@ -666,6 +680,8 @@ class AppStockIntegrationTests(unittest.TestCase):
         self.assertIn("분석 요청이 중단되었습니다.", html)
         self.assertIn("highestProgressPercent", html)
         self.assertIn("incomingPercent < highestProgressPercent", html)
+        self.assertIn("replacePageWithoutFlash", html)
+        self.assertNotIn("document.open();", html)
 
     @patch("src.app.run_integrated_analysis")
     def test_six_month_stock_period_is_available(self, run_analysis):

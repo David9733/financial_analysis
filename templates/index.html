@@ -157,6 +157,20 @@
       submitStatus.hidden = false;
     }
 
+    function replacePageWithoutFlash(html) {
+      const nextDocument = new DOMParser().parseFromString(html, 'text/html');
+      document.title = nextDocument.title;
+      [...document.body.attributes].forEach((attribute) => document.body.removeAttribute(attribute.name));
+      [...nextDocument.body.attributes].forEach((attribute) => document.body.setAttribute(attribute.name, attribute.value));
+      document.body.innerHTML = nextDocument.body.innerHTML;
+      document.body.querySelectorAll('script').forEach((oldScript) => {
+        const script = document.createElement('script');
+        [...oldScript.attributes].forEach((attribute) => script.setAttribute(attribute.name, attribute.value));
+        script.textContent = oldScript.textContent;
+        oldScript.replaceWith(script);
+      });
+    }
+
     function renderProgress(progress) {
       const incomingPercent = Number(progress.percent) || 0;
       if (progress.stage === 'waiting' && highestProgressPercent > 0) return;
@@ -230,9 +244,7 @@
           renderProgress({stage: 'finalizing', percent: 100, message: '결과 화면을 정리했습니다.'});
           await new Promise((resolve) => window.setTimeout(resolve, 500));
         }
-        document.open();
-        document.write(html);
-        document.close();
+        replacePageWithoutFlash(html);
       } catch (_) {
         window.clearInterval(timer);
         setAnalysisLocked(false);
