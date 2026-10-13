@@ -202,6 +202,29 @@ class InterestRateClientTests(unittest.TestCase):
         self.assertEqual(requested_item_codes, ["010300000"])
         self.assertEqual(series.rows, [(date(2026, 10, 1), 4.12)])
 
+    def test_usd_krw_uses_ecos_exchange_table_and_item_code(self):
+        requested_parts = []
+
+        def opener(request, timeout=None):
+            requested_parts.append(urlparse(request.full_url).path.split("/"))
+            return FakeResponse(
+                {
+                    "StatisticSearch": {
+                        "list_total_count": 1,
+                        "row": [{"TIME": "20261001", "DATA_VALUE": "1,358.4"}],
+                    }
+                }
+            )
+
+        with patch("src.macro_api.urlopen", opener):
+            series = InterestRateClient("key").get_usd_krw(
+                date(2026, 10, 1), date(2026, 10, 1)
+            )
+
+        self.assertIn("731Y001", requested_parts[0])
+        self.assertEqual(requested_parts[0][-1], "0000001")
+        self.assertEqual(series.rows, [(date(2026, 10, 1), 1358.4)])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -11,6 +11,7 @@ import re
 import shutil
 import threading
 import time
+import zlib
 from io import BytesIO
 from pathlib import Path
 from uuid import uuid4
@@ -52,6 +53,8 @@ GPT_WEB_TIMEOUT_SECONDS = 10.0
 VERCEL_INLINE_CHART_MAX_WIDTH = 1200
 VERCEL_INLINE_CHART_QUALITY = 78
 VERCEL_INLINE_PNG_BUDGET_BYTES = 2_200_000
+GPT_REQUEST_COMPRESSED_LIMIT_BYTES = 1_000_000
+GPT_REQUEST_DECOMPRESSED_LIMIT_BYTES = 4_000_000
 STOCK_PERIOD_LABELS = {
     "1m": "1개월",
     "3m": "3개월",
@@ -1190,6 +1193,54 @@ def compact_gpt_macro_groups(groups: list[dict]) -> list[dict]:
     ]
 
 
+def encode_gpt_request_data(data: dict) -> dict[str, str]:
+    """서버리스 후속 GPT 요청을 작은 zlib JSON으로 만든다."""
+    raw = json.dumps(
+        data, ensure_ascii=False, allow_nan=False, separators=(",", ":")
+    ).encode("utf-8")
+    compressed = zlib.compress(raw, level=9)
+    LOGGER.info(
+        "gpt_request_payload raw_bytes=%d compressed_bytes=%d",
+        len(raw),
+        len(compressed),
+    )
+    return {
+        "encoding": "zlib-base64",
+        "data": base64.b64encode(compressed).decode("ascii"),
+    }
+
+
+def decode_gpt_request_data(body: dict) -> dict:
+    """압축 GPT 요청을 크기 제한 안에서 복원하며 기존 평문 요청도 허용한다."""
+    if body.get("encoding") != "zlib-base64":
+        return body
+    encoded = body.get("data")
+    if not isinstance(encoded, str):
+        raise ValueError("압축된 GPT 분석 데이터가 올바르지 않습니다.")
+    try:
+        compressed = base64.b64decode(encoded, validate=True)
+    except (ValueError, TypeError) as error:
+        raise ValueError("압축된 GPT 분석 데이터를 해석할 수 없습니다.") from error
+    if len(compressed) > GPT_REQUEST_COMPRESSED_LIMIT_BYTES:
+        raise ValueError("압축된 GPT 분석 요청이 너무 큽니다.")
+    decoder = zlib.decompressobj()
+    try:
+        raw = decoder.decompress(
+            compressed, GPT_REQUEST_DECOMPRESSED_LIMIT_BYTES + 1
+        )
+        if decoder.unconsumed_tail:
+            raise ValueError("GPT 분석 요청의 압축 해제 크기가 너무 큽니다.")
+        raw += decoder.flush()
+    except zlib.error as error:
+        raise ValueError("압축된 GPT 분석 데이터를 해석할 수 없습니다.") from error
+    if len(raw) > GPT_REQUEST_DECOMPRESSED_LIMIT_BYTES:
+        raise ValueError("GPT 분석 요청의 압축 해제 크기가 너무 큽니다.")
+    decoded = json.loads(raw.decode("utf-8"))
+    if not isinstance(decoded, dict):
+        raise ValueError("GPT 분석 데이터가 올바르지 않습니다.")
+    return decoded
+
+
 @app.get("/")
 def index():
     return render_template(
@@ -1454,10 +1505,12 @@ def analyze():
         if os.getenv("VERCEL"):
             gpt_insight_cards, gpt_comparison_cards = [], []
             gpt_loading = True
-            gpt_request_data = {
-                "payload": integrated.kpi_payload,
-                "macro_chart_groups": compact_gpt_macro_groups(macro_chart_groups),
-            }
+            gpt_request_data = encode_gpt_request_data(
+                {
+                    "payload": integrated.kpi_payload,
+                    "macro_chart_groups": compact_gpt_macro_groups(macro_chart_groups),
+                }
+            )
         else:
             gpt_insight_cards, gpt_comparison_cards = [], []
             gpt_loading = True
@@ -1573,9 +1626,15 @@ def gpt_analysis_result(run_id: str):
     if not re.fullmatch(r"[0-9a-f]{32}", run_id):
         abort(404)
     if request.method == "POST":
-        if request.content_length and request.content_length > 1_000_000:
+        if (
+            request.content_length
+            and request.content_length > GPT_REQUEST_COMPRESSED_LIMIT_BYTES * 2
+        ):
             return jsonify({"status": "failed", "message": "GPT 분석 요청이 너무 큽니다."}), 413
-        body = request.get_json(silent=True) or {}
+        try:
+            body = decode_gpt_request_data(request.get_json(silent=True) or {})
+        except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as error:
+            return jsonify({"status": "failed", "message": str(error)}), 400
         payload = body.get("payload")
         companies = payload.get("companies") if isinstance(payload, dict) else None
         if not isinstance(companies, list) or not 1 <= len(companies) <= 10:

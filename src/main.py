@@ -377,6 +377,7 @@ def collect_market_macro(
 
     _notify_progress(progress_callback, "macro", 71, "원/달러 환율을 수집하고 있습니다.")
     fx_rows: list = []
+    fx_primary_error: Exception | None = None
     try:
         fx_started_at = time.monotonic()
         fx_client = ExchangeRateClient(
@@ -395,7 +396,29 @@ def collect_market_macro(
             len(fx_series.failed_dates),
         )
     except (MacroAPIError, ValueError) as error:
-        warnings.append(f"환율 데이터를 불러오지 못했습니다. ({error})")
+        fx_primary_error = error
+        LOGGER.warning("exchange_rate_primary_failed error=%s", error)
+
+    # 수출입은행 키 또는 일일 호출 한도 문제가 있어도 이미 사용하는 ECOS 키로
+    # 같은 원/미국달러 매매기준율을 기간 단위 한 번에 조회한다.
+    if not fx_rows:
+        try:
+            fx_fallback_started_at = time.monotonic()
+            fx_rows = InterestRateClient(get_ecos_api_key(PROJECT_ROOT)).get_usd_krw(
+                fetch_start, trading_end
+            ).rows
+            LOGGER.info(
+                "performance stage=exchange_rate_ecos_fallback duration_seconds=%.3f row_count=%d",
+                time.monotonic() - fx_fallback_started_at,
+                len(fx_rows),
+            )
+        except (MacroAPIError, ValueError) as fallback_error:
+            LOGGER.warning("exchange_rate_fallback_failed error=%s", fallback_error)
+            primary_message = f"{fx_primary_error}; " if fx_primary_error else ""
+            warnings.append(
+                "환율 데이터를 불러오지 못했습니다. "
+                f"({primary_message}ECOS 대체 조회: {fallback_error})"
+            )
 
     _notify_progress(progress_callback, "macro", 74, "금리를 수집하고 있습니다.")
     rate_rows: list = []

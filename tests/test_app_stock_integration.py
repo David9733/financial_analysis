@@ -272,8 +272,27 @@ class AppStockIntegrationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn('data-gpt-status-url="/gpt-analysis/', html)
         self.assertIn('id="gpt-request-data"', html)
+        self.assertIn('"encoding": "zlib-base64"', html)
         self.assertIn("GPT 기업 분석을 생성하고 있습니다.", html)
         self.assertIn("method: 'POST'", html)
+
+    @patch("src.app.run_gpt_analysis_with_timeout")
+    def test_compressed_stateless_gpt_post_returns_completed_fragment(self, run_gpt):
+        from src.app import encode_gpt_request_data
+
+        result = self.fake_result()
+        run_gpt.return_value = ([], [], "")
+        request_data = encode_gpt_request_data(
+            {"payload": result.kpi_payload, "macro_chart_groups": []}
+        )
+
+        response = self.client.post(
+            f"/gpt-analysis/{'f' * 32}", json=request_data
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["status"], "complete")
+        run_gpt.assert_called_once_with(result.kpi_payload)
 
     @patch("src.app.run_gpt_analysis_with_timeout")
     def test_stateless_gpt_post_returns_completed_fragment(self, run_gpt):
