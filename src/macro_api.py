@@ -25,8 +25,6 @@ ECOS_URL = "https://ecos.bok.or.kr/api/StatisticSearch"
 ECOS_RATE_TABLE = "817Y002"  # 시장금리(일별)
 ECOS_TREASURY_3Y = "010200000"  # 국고채(3년)
 ECOS_CORPORATE_AA_MINUS_3Y = "010300000"  # 회사채(3년, AA-)
-ECOS_EXCHANGE_TABLE = "731Y001"  # 주요국 통화의 대원화환율(일별)
-ECOS_USD_KRW = "0000001"  # 원/미국달러(매매기준율)
 ECOS_PAGE_SIZE = 1000
 EXIM_MAX_WORKERS = 4
 EXIM_ATTEMPTS = 3
@@ -230,7 +228,7 @@ class ExchangeRateClient:
 
 
 class InterestRateClient:
-    """ECOS StatisticSearch로 일별 환율과 금리를 기간 단위로 조회한다."""
+    """ECOS StatisticSearch로 국고채·회사채 일별 금리를 기간 단위로 조회한다."""
 
     def __init__(self, api_key: str) -> None:
         self.api_key = api_key
@@ -242,8 +240,6 @@ class InterestRateClient:
         start: str,
         end: str,
         item_code: str,
-        table_code: str,
-        label: str,
     ) -> dict:
         path = "/".join(
             quote(str(part), safe="")
@@ -253,16 +249,16 @@ class InterestRateClient:
                 "kr",
                 start_row,
                 end_row,
-                table_code,
+                ECOS_RATE_TABLE,
                 "D",
                 start,
                 end,
                 item_code,
             )
         )
-        data = _get_json(f"{ECOS_URL}/{path}", label)
+        data = _get_json(f"{ECOS_URL}/{path}", "금리")
         if not isinstance(data, dict):
-            raise MacroAPIError(f"{label} API 응답 형식이 올바르지 않습니다.")
+            raise MacroAPIError("금리 API 응답 형식이 올바르지 않습니다.")
         return data
 
     def _get_daily_rate(
@@ -271,10 +267,9 @@ class InterestRateClient:
         end_date: date,
         item_code: str,
         label: str,
-        table_code: str = ECOS_RATE_TABLE,
     ) -> MacroSeries:
         if start_date > end_date:
-            raise ValueError(f"{label} 시작일은 종료일보다 늦을 수 없습니다.")
+            raise ValueError("금리 시작일은 종료일보다 늦을 수 없습니다.")
         start = start_date.strftime("%Y%m%d")
         end = end_date.strftime("%Y%m%d")
         rows: list[tuple[date, float]] = []
@@ -287,8 +282,6 @@ class InterestRateClient:
                 start,
                 end,
                 item_code,
-                table_code,
-                label,
             )
             if "RESULT" in data:
                 result = data["RESULT"] or {}
@@ -296,10 +289,10 @@ class InterestRateClient:
                 if code == "INFO-200":
                     raise MacroAPIError(
                         f"{label} API 결과가 비어 있습니다. 기간 또는 "
-                        f"통계표({table_code})와 항목({item_code}) 코드를 확인해 주세요."
+                        f"통계표({ECOS_RATE_TABLE})와 항목({item_code}) 코드를 확인해 주세요."
                     )
                 raise MacroAPIError(
-                    f"{label} API 오류: code={code}, message={result.get('MESSAGE')}"
+                    f"금리 API 오류: code={code}, message={result.get('MESSAGE')}"
                 )
             body = data.get("StatisticSearch") or {}
             total = int(body.get("list_total_count") or 0)
@@ -336,14 +329,4 @@ class InterestRateClient:
             end_date,
             ECOS_CORPORATE_AA_MINUS_3Y,
             "회사채 3년 AA- 금리",
-        )
-
-    def get_usd_krw(self, start_date: date, end_date: date) -> MacroSeries:
-        """ECOS 원/미국달러 매매기준율을 기간 단위로 반환한다."""
-        return self._get_daily_rate(
-            start_date,
-            end_date,
-            ECOS_USD_KRW,
-            "원/달러 환율",
-            table_code=ECOS_EXCHANGE_TABLE,
         )
