@@ -1,0 +1,57 @@
+{% macro evidence(items, comparison=false) -%}
+  {% if items %}<p class="insight-evidence">근거: {% for item in items %}{% if comparison %}{{ item.company }} {% endif %}{{ item.label }} {{ item.value }}{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+{%- endmacro %}
+
+{% macro company_correlation(company, groups) -%}
+  {% for group in groups %}
+    {% if group.key == 'correlation' %}
+      {% for chart in group.charts %}
+        {% if chart.company == company and chart.insight_sections %}
+          <section class="detail-correlation-analysis">
+            <p class="eyebrow">CORRELATION ANALYSIS</p>
+            <h4>상관관계 분석</h4>
+            <section><h5>조회기간 환경</h5><p>{{ chart.insight_sections.environment }}</p></section>
+            {% if chart.insight_sections.evidence %}<section><h5>시장 대비 노출 근거</h5><ul>{% for item in chart.insight_sections.evidence %}<li>{{ item }}</li>{% endfor %}</ul></section>{% endif %}
+            {% if chart.insight_sections.conclusion %}<section class="correlation-conclusion"><h5>핵심 판정</h5><p>{{ chart.insight_sections.conclusion }}</p></section>{% endif %}
+            {% if chart.insight_sections.notice %}<p class="correlation-notice">{{ chart.insight_sections.notice }}</p>{% endif %}
+          </section>
+        {% endif %}
+      {% endfor %}
+    {% endif %}
+  {% endfor %}
+{%- endmacro %}
+
+{% if gpt_notice %}<p class="gpt-analysis-notice">{{ gpt_notice }}</p>{% endif %}
+{% if gpt_comparisons %}
+  <h4 class="insight-group-title">기업 간 차이</h4>
+  <div class="comparison-insight-grid">{% for comparison in gpt_comparisons %}<article class="panel comparison-insight-card"><p>{{ comparison.summary }}</p>{{ evidence(comparison.evidence, true) }}</article>{% endfor %}</div>
+{% endif %}
+{% if gpt_insights %}
+  {% if gpt_comparisons %}<h4 class="insight-group-title company-analysis-title">기업별 분석</h4>{% endif %}
+  <div class="summary-insight-grid">
+    {% for insight in gpt_insights %}
+      <article class="panel insight-card summary-insight-card">
+        <h3>{{ insight.company }}</h3>
+        <section><h4>한줄 요약</h4><p>{{ insight.one_line_summary.summary }}</p>{{ evidence(insight.one_line_summary.evidence) }}</section>
+        <div class="signal-grid">
+          <section><h4>긍정적으로 나타난 데이터</h4><ul>{% for item in insight.positive_signals %}<li>{{ item.summary }}</li>{% else %}<li>확인 가능한 신호가 없습니다.</li>{% endfor %}</ul></section>
+          <section><h4>주의해서 볼 데이터</h4><ul>{% for item in insight.caution_signals %}<li>{{ item.summary }}</li>{% else %}<li>확인 가능한 신호가 없습니다.</li>{% endfor %}</ul></section>
+        </div>
+        <section><h4>재무 체질과 시나리오 반응</h4><p>{{ insight.financial_scenario.summary }}</p>{{ evidence(insight.financial_scenario.evidence) }}</section>
+        <section><h4>종합 분석</h4><p>{{ insight.overall_summary.summary }}</p>{{ evidence(insight.overall_summary.evidence) }}</section>
+        <details class="insight-details"><summary>{{ insight.company }} 세부 분석 펼치기</summary><div class="insight-details-body">
+          <section><h4>데이터 기준</h4><p>{{ insight.data_basis }}</p></section>
+          {% for title, section in [('성장성', insight.growth), ('수익성', insight.profitability), ('재무 안정성', insight.stability), ('효율성', insight.efficiency), ('시장 흐름', insight.market)] %}
+            <section><h4>{{ title }}</h4><p>{{ section.summary }}</p>{{ evidence(section.evidence) }}</section>
+          {% endfor %}
+          {% for title, items in [('KPI 간 주요 관계 및 불일치', insight.relationships_and_mismatches), ('추가 확인사항', insight.additional_checks)] %}
+            {% if items %}<section><h4>{{ title }}</h4><ul>{% for section in items %}<li>{{ section.summary }}{% if section.evidence %}<span class="insight-evidence"> — {% for item in section.evidence %}{{ item.label }} {{ item.value }}{% if not loop.last %}, {% endif %}{% endfor %}</span>{% endif %}</li>{% endfor %}</ul></section>{% endif %}
+          {% endfor %}
+          {{ company_correlation(insight.company, macro_chart_groups) }}
+        </div></details>
+      </article>
+    {% endfor %}
+  </div>
+{% else %}
+  <div class="empty-state">GPT 분석을 사용할 수 없어 계산된 KPI만 표시합니다.</div>
+{% endif %}

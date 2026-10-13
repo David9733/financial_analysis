@@ -5,12 +5,94 @@ from unittest.mock import Mock
 
 import pandas as pd
 
-from src.financial_analysis import FINAL_COLUMNS, select_output_periods
+from src.financial_analysis import (
+    FINAL_COLUMNS,
+    RAW_COLUMNS,
+    calculate_metrics,
+    extract_source_accounts,
+    select_output_periods,
+)
 from src.kpi_analysis import _financial_trends, build_kpi_payload
-from src.main import _query_years
+from src.dart_api import CompanyNotFoundError
+from src.main import _query_years, _resolve_company_inputs
+from src.star_score import GROWTH_ANCHORS, build_star_score, interpolate_score
 
 
 class KPIAnalysisTests(unittest.TestCase):
+    def test_multiple_invalid_company_names_return_all_similar_company_guides(self):
+        client = Mock()
+        client.find_company.side_effect = [
+            {
+                "corp_code": "00126380",
+                "corp_name": "삼성전자",
+                "stock_code": "005930",
+            },
+            CompanyNotFoundError(
+                "입력한 기업명 '롯데웰프드'을(를) 정확히 찾을 수 없습니다. "
+                "비슷한 기업: 롯데웰푸드, 롯데푸드"
+            ),
+            CompanyNotFoundError(
+                "입력한 기업명 '에스케하이닉스'을(를) 정확히 찾을 수 없습니다. "
+                "비슷한 기업: SK하이닉스"
+            ),
+        ]
+
+        with self.assertRaises(CompanyNotFoundError) as raised:
+            _resolve_company_inputs(
+                client, ["삼성전자", "롯데웰프드", "에스케하이닉스"]
+            )
+
+        message = str(raised.exception)
+        self.assertEqual(message.count("기업명을 확인해 주세요."), 1)
+        self.assertEqual(
+            message,
+            "기업명을 확인해 주세요.\n"
+            "- '롯데웰프드' → 비슷한 기업: 롯데웰푸드, 롯데푸드\n"
+            "- '에스케하이닉스' → 비슷한 기업: SK하이닉스",
+        )
+        self.assertEqual(client.find_company.call_count, 3)
+
+    def test_dart_comparative_amount_restores_missing_financial_year(self):
+        def row(statement, account_id, name, current, previous):
+            return {
+                "sj_div": statement,
+                "account_id": account_id,
+                "account_nm": name,
+                "thstrm_amount": str(current),
+                "frmtrm_amount": str(previous),
+                "currency": "KRW",
+                "rcept_no": "20230001",
+            }
+
+        statement_rows = [
+            row("CIS", "dart_OperatingIncomeLoss", "영업이익", 120, 100),
+            row("CIS", "ifrs-full_ProfitLoss", "당기순이익", 100, 80),
+            row("BS", "ifrs-full_Assets", "자산총계", 1200, 1000),
+            row("BS", "ifrs-full_Liabilities", "부채총계", 700, 600),
+            row("BS", "ifrs-full_Equity", "자본총계", 500, 400),
+            row("CIS", "ifrs-full_InterestRevenueExpense", "순이자손익", 60, 50),
+            row("CIS", "ifrs-full_FeeAndCommissionIncomeExpense", "순수수료손익", 25, 20),
+        ]
+        records = extract_source_accounts(
+            "테스트금융", 2023, "CFS", statement_rows
+        ) + extract_source_accounts(
+            "테스트금융",
+            2022,
+            "CFS",
+            statement_rows,
+            amount_field="frmtrm_amount",
+            log_missing=False,
+        )
+
+        metrics = calculate_metrics(pd.DataFrame(records, columns=RAW_COLUMNS))
+        latest = metrics.loc[metrics["연도"] == 2023].iloc[0]
+
+        self.assertEqual(metrics["연도"].tolist(), [2022, 2023])
+        self.assertAlmostEqual(latest["영업이익성장"], 20.0)
+        self.assertAlmostEqual(latest["당기순이익성장"], 25.0)
+        self.assertAlmostEqual(latest["ROE"], 22.22)
+        self.assertAlmostEqual(latest["ROA"], 9.09)
+
     @staticmethod
     def financial_frame() -> pd.DataFrame:
         return pd.DataFrame(
@@ -74,7 +156,7 @@ class KPIAnalysisTests(unittest.TestCase):
         )
         company = payload["companies"][0]
 
-        self.assertEqual(payload["schema_version"], "1.6")
+        self.assertEqual(payload["schema_version"], "1.7")
         self.assertEqual(company["financial_period"], "2025")
         self.assertAlmostEqual(company["financial_kpi"]["net_margin"]["value"], 8.33)
         self.assertAlmostEqual(company["financial_kpi"]["roa"]["value"], 11.11)
@@ -96,6 +178,64 @@ class KPIAnalysisTests(unittest.TestCase):
             company["financial_trend"]["roe"]["status"],
             "no_comparison_period",
         )
+        self.assertEqual(
+            [axis["key"] for axis in company["star_score"]],
+            ["growth", "profitability", "stability", "efficiency", "market"],
+        )
+        self.assertTrue(
+            all(
+                axis["status"] == "available" and 0 <= axis["score"] <= 100
+                for axis in company["star_score"]
+            )
+        )
+
+    def test_star_score_interpolates_and_clamps_fixed_anchors(self):
+        self.assertEqual(interpolate_score(-100.0, GROWTH_ANCHORS), 0.0)
+        self.assertEqual(interpolate_score(100.0, GROWTH_ANCHORS), 100.0)
+        self.assertEqual(interpolate_score(5.0, GROWTH_ANCHORS), 62.5)
+
+    def test_financial_company_uses_sector_proxies(self):
+        rows = pd.DataFrame(
+            [
+                {
+                    "연도": year,
+                    "순이자손익": interest,
+                    "순수수료손익": fee,
+                    "당기순이익": profit,
+                    "총자산": assets,
+                    "자본총계": equity,
+                    "총자산성장": 5.0,
+                }
+                for year, interest, fee, profit, assets, equity in (
+                    (2023, 80, 20, 30, 900, 70),
+                    (2024, 90, 24, 35, 950, 75),
+                    (2025, 105, 28, 40, 1000, 80),
+                )
+            ]
+        )
+        financial = {
+            "net_income_growth": {"value": 14.3, "status": "available"},
+            "roe": {"value": 10.0, "status": "available"},
+            "roa": {"value": 4.0, "status": "available"},
+        }
+        market = {
+            "period_return": {"value": 12.0, "status": "available"},
+            "price_to_ma20": {"value": 3.0, "status": "available"},
+            "daily_volatility": {"value": 1.5, "status": "available"},
+        }
+        macro = {"market_index_change": {"value": 5.0, "status": "available"}}
+
+        axes = build_star_score("금융업", rows, financial, {}, market, macro)
+
+        self.assertTrue(all(axis["status"] == "available" for axis in axes))
+        self.assertTrue(next(axis for axis in axes if axis["key"] == "stability")["is_proxy"])
+        self.assertTrue(next(axis for axis in axes if axis["key"] == "efficiency")["is_proxy"])
+
+    def test_star_axis_requires_half_of_planned_weight(self):
+        rows = pd.DataFrame([{"연도": 2025, "매출채권회전일수": pd.NA}])
+        axes = build_star_score("일반기업", rows, {}, {}, {}, {})
+
+        self.assertTrue(all(axis["status"] == "insufficient_data" for axis in axes))
 
     def test_financial_trends_use_metric_direction_and_three_consecutive_years(self):
         history = []
@@ -160,12 +300,58 @@ class KPIAnalysisTests(unittest.TestCase):
 
     def test_one_year_query_collects_enough_history_for_three_year_trend(self):
         client = Mock()
-        client.get_annual_financials.return_value = ([], "CFS")
+        client.get_annual_financials.return_value = ([{"account_id": "test"}], "CFS")
 
         collected = _query_years(client, "001", "테스트전자", None, None, 1)
 
         self.assertEqual(len(collected), 4)
         self.assertEqual(client.get_annual_financials.call_count, 4)
+
+    def test_empty_annual_response_does_not_count_as_collected_year(self):
+        client = Mock()
+        client.get_annual_financials.side_effect = [
+            ([], "CFS"),
+            *[([{"account_id": str(index)}], "CFS") for index in range(4)],
+        ]
+
+        collected = _query_years(client, "001", "테스트전자", None, None, 1)
+
+        self.assertEqual(len(collected), 4)
+        self.assertEqual(client.get_annual_financials.call_count, 5)
+
+    def test_display_period_does_not_change_financial_trend_or_star_axes(self):
+        trend_source = self.financial_frame()
+        oldest = trend_source.iloc[0].copy()
+        oldest["연도"] = 2023
+        oldest["매출성장"] = 2.0
+        oldest["영업이익성장"] = 3.0
+        oldest["당기순이익성장"] = 4.0
+        trend_source = pd.concat(
+            [oldest.to_frame().T, trend_source], ignore_index=True
+        )
+        results = []
+        for years in (1, 2, 3):
+            displayed = trend_source.tail(years).copy()
+            payload = build_kpi_payload(
+                displayed,
+                self.stock_frame(),
+                "1y",
+                financial_trend_source=trend_source,
+            )
+            company = payload["companies"][0]
+            results.append(
+                (
+                    company["financial_trend"],
+                    [
+                        (axis["key"], axis["score"], axis["status"])
+                        for axis in company["star_score"]
+                        if axis["key"] != "market"
+                    ],
+                )
+            )
+
+        self.assertEqual(results[0], results[1])
+        self.assertEqual(results[1], results[2])
 
     def test_financial_trends_reject_nonconsecutive_years(self):
         history = [

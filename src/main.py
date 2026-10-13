@@ -487,12 +487,55 @@ def _query_years(
             logger.info("%s %s년: 사업보고서 재무데이터가 없어 건너뜁니다.", company_name, year)
             continue
         rows, fs_div = response
+        if not rows:
+            logger.info(
+                "%s %s년: 사업보고서 응답에 재무계정이 없어 건너뜁니다.",
+                company_name,
+                year,
+            )
+            continue
         collected.append((year, rows, fs_div))
         logger.info("%s %s년 %s 재무데이터 수집 완료", company_name, year, fs_div)
         if required_count is not None and len(collected) >= required_count:
             break
 
     return sorted(collected, key=lambda item: item[0])
+
+
+def _resolve_company_inputs(
+    client: DartClient, input_names: list[str]
+) -> list[tuple[str, dict]]:
+    """모든 입력명을 먼저 확인하고 잘못된 이름의 후보 안내를 한 번에 반환한다."""
+    resolved: list[tuple[str, dict]] = []
+    errors: list[str] = []
+    logger = logging.getLogger(__name__)
+
+    for input_name in input_names:
+        try:
+            company = {**client.find_company(input_name), "requested_name": input_name}
+        except CompanyNotFoundError as error:
+            message = str(error)
+            suggestion_marker = "비슷한 기업:"
+            if suggestion_marker in message:
+                suggestions = message.split(suggestion_marker, 1)[1].strip()
+                errors.append(f"'{input_name}' → 비슷한 기업: {suggestions}")
+            else:
+                errors.append(f"'{input_name}' → {message}")
+            continue
+        logger.info(
+            "기업명 확인: 입력=%s, DART기업명=%s, 고유번호=%s, 종목코드=%s",
+            input_name,
+            company["corp_name"],
+            company["corp_code"],
+            company.get("stock_code") or "없음",
+        )
+        resolved.append((input_name, company))
+
+    if errors:
+        raise CompanyNotFoundError(
+            "기업명을 확인해 주세요.\n" + "\n".join(f"- {error}" for error in errors)
+        )
+    return resolved
 
 
 def run_analysis(
@@ -521,8 +564,9 @@ def run_analysis(
     client = DartClient(api_key, data_dir=CACHE_DIR)
     raw_records = []
     resolved_companies = []
+    resolved_inputs = _resolve_company_inputs(client, companies)
 
-    for index, input_name in enumerate(companies):
+    for index, (input_name, company) in enumerate(resolved_inputs):
         progress = 8 + int(index / max(len(companies), 1) * 32)
         _notify_progress(
             progress_callback,
@@ -530,7 +574,6 @@ def run_analysis(
             progress,
             f"{input_name} 재무제표를 수집하고 있습니다.",
         )
-        company = client.find_company(input_name)
         company_name = company["corp_name"]
         yearly_data = _query_years(
             client,
@@ -548,6 +591,28 @@ def run_analysis(
             raw_records.extend(
                 extract_source_accounts(company_name, year, fs_div, rows)
             )
+        # 일부 금융·보험사는 과거 사업연도 단독 API 응답이 없지만 최신
+        # 사업보고서 안에 전기와 전전기 비교금액을 함께 제공합니다. 직접
+        # 조회한 값은 먼저 추가해 우선 사용하고, 비교금액은 빠진 연도나
+        # 계정만 보완하도록 뒤에 추가합니다.
+        for source_year, rows, fs_div in yearly_data:
+            for year_offset, amount_field in (
+                (1, "frmtrm_amount"),
+                (2, "bfefrmtrm_amount"),
+            ):
+                comparison_year = source_year - year_offset
+                if comparison_year < 2015:
+                    continue
+                comparison_records = extract_source_accounts(
+                    company_name,
+                    comparison_year,
+                    fs_div,
+                    rows,
+                    amount_field=amount_field,
+                    log_missing=False,
+                )
+                if any(pd.notna(record["금액"]) for record in comparison_records):
+                    raw_records.extend(comparison_records)
 
     if not raw_records:
         raise DartAPIError("분석 가능한 재무 데이터를 가져오지 못했습니다.")
@@ -588,6 +653,7 @@ def run_integrated_analysis(
     show_charts: bool = True,
     output_dir: Path | None = None,
     progress_callback: ProgressCallback | None = None,
+    include_gpt: bool | None = None,
 ) -> IntegratedAnalysisResult:
     """재무분석 후 상장기업의 일별 주식시세를 결합한다."""
     if stock_period not in STOCK_PERIOD_DAYS:
@@ -764,7 +830,8 @@ def run_integrated_analysis(
     )
     gpt_insights: list[dict] = []
     gpt_comparisons: list[dict] = []
-    if ENABLE_GPT_INSIGHTS:
+    should_generate_gpt = ENABLE_GPT_INSIGHTS if include_gpt is None else include_gpt
+    if should_generate_gpt:
         _notify_progress(progress_callback, "gpt", 78, "GPT 자동 인사이트를 생성하고 있습니다.")
         gpt_started_at = time.monotonic()
         try:
@@ -810,7 +877,8 @@ def run_integrated_analysis(
             encoding="utf-8",
         )
 
-    _notify_progress(progress_callback, "finalizing", 96, "결과 화면을 정리하고 있습니다.")
+    if should_generate_gpt:
+        _notify_progress(progress_callback, "finalizing", 96, "결과 화면을 정리하고 있습니다.")
 
     return IntegratedAnalysisResult(
         financial=financial,

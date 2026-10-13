@@ -29,7 +29,11 @@ from src.stock_visualization import (
     monthly_volume_summary,
     volume_direction_counts,
 )
-from src.visualization import _line_chart, create_single_company_charts
+from src.visualization import (
+    _line_chart,
+    create_comparison_charts,
+    create_single_company_charts,
+)
 
 
 class SingleCompanyVisualizationTests(unittest.TestCase):
@@ -104,6 +108,76 @@ class SingleCompanyVisualizationTests(unittest.TestCase):
             self.assertTrue((charts_dir / "revenue_operating_profit.png").exists())
             self.assertTrue((charts_dir / "operating_margin.png").exists())
             self.assertTrue((charts_dir / "roe_revenue_growth.png").exists())
+
+
+class ComparisonVisualizationTests(unittest.TestCase):
+    def tearDown(self) -> None:
+        plt.close("all")
+
+    @staticmethod
+    def company(name: str, analysis_type: str, **metrics) -> dict:
+        return {
+            "기업명": name,
+            "분석유형": analysis_type,
+            "연도": 2025,
+            **metrics,
+        }
+
+    def test_mixed_industries_skip_metrics_available_for_only_one_company(self) -> None:
+        data = pd.DataFrame(
+            [
+                self.company("일반A", "일반기업", ROE=10.0, 매출=1000),
+                self.company("금융A", "금융업", ROE=8.0, 순이자손익=500),
+                self.company("보험A", "보험업", ROE=6.0, 보험서비스수익=700),
+            ]
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            charts_dir = Path(directory)
+            figures = create_comparison_charts(data, charts_dir)
+
+            self.assertTrue((charts_dir / "comparison_roe.png").exists())
+            self.assertFalse((charts_dir / "comparison_revenue.png").exists())
+            self.assertFalse(
+                (charts_dir / "comparison_net_interest_income.png").exists()
+            )
+            self.assertTrue(
+                all(len(figure.axes[0].patches) >= 2 for figure in figures)
+            )
+
+    def test_mixed_industries_compare_shared_metrics(self) -> None:
+        data = pd.DataFrame(
+            [
+                self.company("일반A", "일반기업", ROE=10.0, 매출=1000),
+                self.company("일반B", "일반기업", ROE=12.0, 매출=1200),
+                self.company("금융A", "금융업", ROE=8.0, 순이자손익=500),
+            ]
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            charts_dir = Path(directory)
+            figures = create_comparison_charts(data, charts_dir)
+
+            self.assertTrue((charts_dir / "comparison_revenue.png").exists())
+            self.assertTrue((charts_dir / "comparison_roe.png").exists())
+            roe_figure = next(
+                figure for figure in figures if "ROE" in figure.axes[0].get_title()
+            )
+            self.assertEqual(len(roe_figure.axes[0].patches), 3)
+
+    def test_same_industry_comparison_uses_existing_filenames(self) -> None:
+        data = pd.DataFrame(
+            [
+                self.company("금융A", "금융업", ROE=8.0, 순이자손익=500),
+                self.company("금융B", "금융업", ROE=9.0, 순이자손익=600),
+            ]
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            charts_dir = Path(directory)
+            create_comparison_charts(data, charts_dir)
+
+            self.assertTrue((charts_dir / "comparison_roe.png").exists())
+            self.assertTrue(
+                (charts_dir / "comparison_net_interest_income.png").exists()
+            )
 
 
 class MonthlyVolumeTests(unittest.TestCase):

@@ -2,13 +2,21 @@ from __future__ import annotations
 
 import unittest
 import tempfile
+import time
 from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
 
 import pandas as pd
 
-from src.app import KPI_HELP_TEXT, app, build_stock_chart_items, format_kpi_metric
+from src.app import (
+    GPT_RUNS,
+    KPI_HELP_TEXT,
+    app,
+    build_stock_chart_items,
+    format_kpi_metric,
+    start_async_gpt_analysis,
+)
 from src.financial_analysis import FINAL_COLUMNS
 from src.main import IntegratedAnalysisResult
 from src.stock_analysis import STOCK_PRICE_COLUMNS, STOCK_SUMMARY_COLUMNS
@@ -30,6 +38,19 @@ class AppStockIntegrationTests(unittest.TestCase):
                 }
             ),
             "방향성 없음",
+        )
+
+    def test_no_comparison_period_kpi_uses_hyphen_in_tables(self):
+        self.assertEqual(
+            format_kpi_metric(
+                {
+                    "value": None,
+                    "unit": "%",
+                    "status": "no_comparison_period",
+                    "reason": "비교기간 부족",
+                }
+            ),
+            "-",
         )
 
     def test_kpi_metric_honors_display_precision(self):
@@ -82,6 +103,24 @@ class AppStockIntegrationTests(unittest.TestCase):
                                 "reason": None,
                             }
                         },
+                        "star_score": [
+                            {
+                                "key": key,
+                                "label": label,
+                                "score": score,
+                                "status": "available",
+                                "evidence": [{"label": "ROE", "value": "10.2%"}],
+                                "is_proxy": False,
+                                "reason": None,
+                            }
+                            for key, label, score in (
+                                ("growth", "성장성", 72),
+                                ("profitability", "수익성", 68),
+                                ("stability", "재무 안정성", 74),
+                                ("efficiency", "효율성", 65),
+                                ("market", "시장흐름", 70),
+                            )
+                        ],
                     }
                 ]
             },
@@ -151,6 +190,13 @@ class AppStockIntegrationTests(unittest.TestCase):
         self.assertIn("<dt>ROE</dt><dd>10.2%</dd>", html)
         self.assertNotIn("기업 간 차이", response.get_data(as_text=True))
         self.assertNotIn("기업별 KPI 차이 요약", response.get_data(as_text=True))
+        self.assertIn("기업 역량 스타차트", html)
+        self.assertIn('id="company-star-chart"', html)
+        self.assertIn('data-star-toggle="0" aria-pressed="true"', html)
+        self.assertNotIn("star-evidence-card", html)
+        self.assertIn("업종별 평가 기준", html)
+        self.assertIn("순이자손익", html)
+        self.assertIn("보험서비스마진", html)
         self.assertIn("전년과 당년 평균자본", response.get_data(as_text=True))
         self.assertIn("마지막 종가 ÷ 첫 종가", response.get_data(as_text=True))
         self.assertIn("kpi-help-item", response.get_data(as_text=True))
@@ -174,6 +220,68 @@ class AppStockIntegrationTests(unittest.TestCase):
         self.assertIn("한줄 핵심 요약", html)
         self.assertIn("재무 체질과 시나리오 반응", html)
         self.assertIn("종합 분석 요약", html)
+
+    @patch("src.app.ENABLE_GPT_INSIGHTS", True)
+    @patch("src.app.start_async_gpt_analysis")
+    @patch("src.app.run_integrated_analysis")
+    def test_result_opens_financial_tab_while_gpt_loads_in_background(
+        self, run_analysis, start_gpt
+    ):
+        result = self.fake_result()
+        result.gpt_insights = []
+        result.gpt_comparisons = []
+        run_analysis.return_value = result
+        run_id = "c" * 32
+
+        response = self.client.post(
+            "/analyze",
+            data={
+                "run_id": run_id,
+                "company": "삼성전자",
+                "number_of_years": "5",
+                "stock_period": "1y",
+            },
+        )
+        html = response.get_data(as_text=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('id="tab-financial" aria-controls="panel-financial" aria-selected="true"', html)
+        self.assertIn('id="panel-summary" class="tab-panel" role="tabpanel" aria-labelledby="tab-summary" data-panel="summary" hidden', html)
+        self.assertIn("GPT 기업 분석을 생성하고 있습니다.", html)
+        self.assertIn(f'data-gpt-status-url="/gpt-analysis/{run_id}"', html)
+        self.assertFalse(run_analysis.call_args.kwargs["include_gpt"])
+        start_gpt.assert_called_once()
+
+    @patch("src.app.analyze_kpis")
+    def test_async_gpt_endpoint_returns_completed_fragment(self, analyze_kpis):
+        result = self.fake_result()
+        analyze_kpis.return_value = {
+            "analyses": result.gpt_insights,
+            "comparisons": result.gpt_comparisons,
+        }
+        run_id = "d" * 32
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                start_async_gpt_analysis(
+                    run_id,
+                    result.kpi_payload,
+                    [],
+                    Path(directory),
+                )
+                deadline = time.monotonic() + 2
+                while time.monotonic() < deadline:
+                    if GPT_RUNS.get(run_id, {}).get("status") == "complete":
+                        break
+                    time.sleep(0.01)
+
+                response = self.client.get(f"/gpt-analysis/{run_id}")
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.get_json()
+            self.assertEqual(payload["status"], "complete")
+            self.assertIn("한줄 핵심 요약", payload["html"])
+        finally:
+            GPT_RUNS.pop(run_id, None)
 
     def test_requested_financial_and_market_kpis_have_help_text(self):
         requested = {
@@ -295,6 +403,7 @@ class AppStockIntegrationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn('<h2 id="combined-insights-title">종합 인사이트</h2>', html)
         self.assertIn("상관관계 분석", html)
+        self.assertEqual(html.count("상관관계 분석"), 1)
         details_start = html.index("삼성전자 세부 분석 펼치기")
         correlation_start = html.index("상관관계 분석", details_start)
         details_end = html.index("</details>", details_start)
@@ -473,7 +582,7 @@ class AppStockIntegrationTests(unittest.TestCase):
         self.assertNotIn("환율 변화율-금리 변화폭 상관계수", html)
         self.assertNotIn("0.72", html)
         self.assertNotIn("-0.35", html)
-        self.assertNotIn("kpi-warning-item", html)
+        self.assertNotRegex(html, r'class="[^"]*\bkpi-warning-item\b')
         self.assertNotIn("공통 추세만으로도 높게 나타날 수 있습니다", html)
         self.assertNotIn("외부 요인 보간 거래일", html)
         self.assertNotIn("직전 값(첫 구간은 다음 값)으로", html)
@@ -487,6 +596,26 @@ class AppStockIntegrationTests(unittest.TestCase):
             data={"company": "삼성전자", "number_of_years": "5", "stock_period": "all"},
         )
         self.assertEqual(response.status_code, 400)
+
+    def test_validation_error_is_hidden_when_analysis_is_resubmitted(self):
+        response = self.client.post(
+            "/analyze",
+            data={"company": "", "number_of_years": "5", "stock_period": "1y"},
+        )
+        html = response.get_data(as_text=True)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('id="analysis-error"', html)
+        self.assertIn('id="analysis-submit-status"', html)
+        self.assertIn("onsubmit=\"var errorBox=", html)
+        self.assertIn("loadingBox.hidden=false", html)
+        self.assertIn("(() => {", html)
+        self.assertIn("})();", html)
+        self.assertIn("previousError.hidden = true", html)
+        self.assertIn("showSubmitStatus();", html)
+        self.assertIn("submitStatus.scrollIntoView", html)
+        self.assertIn("minimumLoadingTime", html)
+        self.assertIn("Promise.all([analysisRequest, minimumLoadingTime])", html)
 
     @patch("src.app.run_integrated_analysis")
     def test_six_month_stock_period_is_available(self, run_analysis):
@@ -566,6 +695,8 @@ class AppStockIntegrationTests(unittest.TestCase):
         self.assertIn("핵심 성과지표", html)
         self.assertNotIn("삼성전자 세부 분석 펼치기", html)
         self.assertEqual(html.count('data-tab="'), 4)
+        self.assertEqual(html.count('data-star-toggle='), 2)
+        self.assertEqual(html.count('aria-pressed="true"'), 2)
 
 
 if __name__ == "__main__":

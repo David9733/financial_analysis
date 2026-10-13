@@ -14,7 +14,8 @@
     </section>
 
     <section class="panel input-panel">
-      <form action="{{ url_for('analyze') }}" method="post">
+      <form class="analysis-form" action="{{ url_for('analyze') }}" method="post"
+        onsubmit="var errorBox=this.querySelector('#analysis-error');if(errorBox)errorBox.hidden=true;var loadingBox=this.querySelector('#analysis-submit-status');if(loadingBox)loadingBox.hidden=false;var submitButton=this.querySelector('.submit-button');if(submitButton)submitButton.innerHTML='재무 및 주가 데이터 분석 중…';this.setAttribute('aria-busy','true');">
         <div class="company-label">
           <label for="company-1">기업명</label>
           <span>최대 10개까지 추가</span>
@@ -52,7 +53,11 @@
           <button type="submit" class="submit-button">분석 시작 <span>→</span></button>
         </div>
 
-        {% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
+        {% if error %}<div id="analysis-error" class="error" role="alert">{{ error }}</div>{% endif %}
+        <div id="analysis-submit-status" class="analysis-submit-status" role="status" aria-live="assertive" hidden>
+          <span class="analysis-submit-spinner" aria-hidden="true"></span>
+          <span>오류 내용을 지우고 분석을 다시 시작합니다.</span>
+        </div>
       </form>
     </section>
 
@@ -73,17 +78,34 @@
     </section>
   </main>
   <script>
+  (() => {
     const form = document.querySelector('form');
     const companyList = document.querySelector('#company-list');
     const addButton = document.querySelector('#add-company');
     const maxCompanies = 10;
+    let analysisLocked = false;
+
+    function setAnalysisLocked(locked) {
+      analysisLocked = locked;
+      form.classList.toggle('is-locked', locked);
+      form.setAttribute('aria-busy', String(locked));
+      form.querySelectorAll('input, select, button').forEach((control) => {
+        if (locked) {
+          control.dataset.disabledBeforeAnalysis = String(control.disabled);
+          control.disabled = true;
+        } else {
+          control.disabled = control.dataset.disabledBeforeAnalysis === 'true';
+          delete control.dataset.disabledBeforeAnalysis;
+        }
+      });
+    }
 
     function updateCompanyControls() {
       const rows = [...companyList.querySelectorAll('.company-row')];
       rows.forEach((row) => {
-        row.querySelector('.remove-company').disabled = rows.length === 1;
+        row.querySelector('.remove-company').disabled = analysisLocked || rows.length === 1;
       });
-      addButton.disabled = rows.length >= maxCompanies;
+      addButton.disabled = analysisLocked || rows.length >= maxCompanies;
     }
 
     function bindRemoveButton(button) {
@@ -126,7 +148,13 @@
     const progressBar = document.querySelector('#progress-bar');
     const progressPercent = document.querySelector('#progress-percent');
     const progressMessage = document.querySelector('#progress-message');
+    const submitStatus = document.querySelector('#analysis-submit-status');
     const progressStages = ['financial', 'market', 'macro', 'gpt', 'finalizing', 'complete'];
+
+    function showSubmitStatus(message = '분석 요청을 전송하고 있습니다.') {
+      submitStatus.querySelector('span:last-child').textContent = message;
+      submitStatus.hidden = false;
+    }
 
     function renderProgress(progress) {
       progressPanel.hidden = false;
@@ -142,10 +170,25 @@
     }
 
     form.addEventListener('submit', async (event) => {
+      if (analysisLocked) {
+        event.preventDefault();
+        return;
+      }
+      const previousError = document.querySelector('#analysis-error');
+      if (previousError) {
+        previousError.hidden = true;
+        previousError.setAttribute('aria-hidden', 'true');
+      }
+      showSubmitStatus();
       const button = form.querySelector('.submit-button');
-      button.disabled = true;
-      button.innerHTML = '재무 및 주가 데이터 분석 중…';
-      if (!window.fetch || !window.crypto?.getRandomValues) return;
+      if (!window.fetch || !window.crypto?.getRandomValues) {
+        form.inert = true;
+        form.classList.add('is-locked');
+        form.setAttribute('aria-busy', 'true');
+        button.disabled = true;
+        button.innerHTML = '재무 및 주가 데이터 분석 중…';
+        return;
+      }
 
       event.preventDefault();
       const randomBytes = new Uint8Array(16);
@@ -153,8 +196,10 @@
       const runId = [...randomBytes].map((value) => value.toString(16).padStart(2, '0')).join('');
       const formData = new FormData(form);
       formData.set('run_id', runId);
+      setAnalysisLocked(true);
+      button.innerHTML = '재무 및 주가 데이터 분석 중…';
       renderProgress({stage: 'financial', percent: 3, message: '분석 요청을 전송하고 있습니다.'});
-      progressPanel.scrollIntoView({behavior: 'smooth', block: 'center'});
+      submitStatus.scrollIntoView({behavior: 'smooth', block: 'nearest'});
 
       const pollProgress = async () => {
         try {
@@ -166,19 +211,33 @@
       };
       const timer = window.setInterval(pollProgress, 900);
       try {
-        const response = await fetch(form.action, {method: 'POST', body: formData});
+        const analysisRequest = fetch(form.action, {method: 'POST', body: formData});
+        const minimumLoadingTime = new Promise((resolve) => window.setTimeout(resolve, 900));
+        const [response] = await Promise.all([analysisRequest, minimumLoadingTime]);
         const html = await response.text();
         window.clearInterval(timer);
+        if (response.ok) {
+          renderProgress({stage: 'gpt', percent: 78, message: 'GPT 자동 인사이트를 백그라운드에서 생성하고 있습니다.'});
+          await new Promise((resolve) => window.setTimeout(resolve, 500));
+          renderProgress({stage: 'finalizing', percent: 100, message: '결과 화면을 정리했습니다.'});
+          await new Promise((resolve) => window.setTimeout(resolve, 500));
+        }
         document.open();
         document.write(html);
         document.close();
       } catch (_) {
         window.clearInterval(timer);
-        button.disabled = false;
+        setAnalysisLocked(false);
+        submitStatus.hidden = true;
         button.innerHTML = '분석 다시 시도 <span>→</span>';
         renderProgress({stage: 'failed', percent: 100, message: '서버에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.'});
       }
     });
+
+    window.addEventListener('pageshow', (event) => {
+      if (event.persisted && analysisLocked) setAnalysisLocked(false);
+    });
+  })();
   </script>
 </body>
 </html>

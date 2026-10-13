@@ -1966,6 +1966,8 @@ def analyze_kpis(
     *,
     model: str | None = None,
     timeout: float = 90.0,
+    max_retries: int = 1,
+    max_validation_attempts: int = MAX_VALIDATION_ATTEMPTS,
 ) -> dict[str, list[dict[str, Any]]]:
     """KPI 계약을 전달하고 기업별 구조화된 인사이트를 반환한다."""
     try:
@@ -1980,7 +1982,11 @@ def analyze_kpis(
     except ImportError as error:
         raise GPTAnalysisError("openai 패키지가 설치되어 있지 않습니다.") from error
 
-    client = OpenAI(api_key=get_openai_api_key(project_root), timeout=timeout, max_retries=1)
+    client = OpenAI(
+        api_key=get_openai_api_key(project_root),
+        timeout=timeout,
+        max_retries=max_retries,
+    )
     selected_model = model or os.getenv("OPENAI_MODEL") or DEFAULT_MODEL
     company_count = len(payload.get("companies", []))
     max_output_tokens = min(16_000, 4_000 + 4_000 * max(1, company_count))
@@ -2025,13 +2031,14 @@ def analyze_kpis(
         else "입력된 모든 기업을 정확히 한 번씩 포함하고 comparisons를 하나 이상 작성하십시오."
     )
     request_input = base_input
-    for attempt in range(1, MAX_VALIDATION_ATTEMPTS + 1):
+    attempts = max(1, int(max_validation_attempts))
+    for attempt in range(1, attempts + 1):
         parsed = request_parsed(request_input)
         try:
             _validate_response(parsed, payload)
             break
         except GPTAnalysisError as validation_error:
-            if attempt == MAX_VALIDATION_ATTEMPTS:
+            if attempt == attempts:
                 _repair_validation_issues(parsed, payload)
                 _validate_response(parsed, payload)
                 break

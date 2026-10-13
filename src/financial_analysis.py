@@ -309,8 +309,16 @@ def extract_source_accounts(
     year: int,
     fs_div: str,
     statement_rows: list[dict],
+    *,
+    amount_field: str = "thstrm_amount",
+    log_missing: bool = True,
 ) -> list[dict]:
-    """한 기업·연도의 분석용 원천 계정과 출처 정보를 추출한다."""
+    """한 기업·연도의 분석용 원천 계정과 출처 정보를 추출한다.
+
+    DART 사업보고서가 과거 연도 단독 조회를 제공하지 않는 경우에는
+    ``frmtrm_amount`` 또는 ``bfefrmtrm_amount``를 지정해 보고서 안의
+    비교금액을 계산용 과거 연도로 복원할 수 있다.
+    """
     records = []
     analysis_type = _detect_analysis_type_from_rows(statement_rows)
     selected_accounts = {
@@ -330,8 +338,9 @@ def extract_source_accounts(
                 for fallback_key in fallback_keys
             )
             required = key in REQUIRED_ACCOUNT_KEYS[analysis_type] and not has_fallback
-            log = LOGGER.warning if required else LOGGER.debug
-            log("%s %s년: '%s' 계정을 찾지 못했습니다.", company_name, year, rule["label"])
+            if log_missing:
+                log = LOGGER.warning if required else LOGGER.debug
+                log("%s %s년: '%s' 계정을 찾지 못했습니다.", company_name, year, rule["label"])
             records.append(
                 {
                     "기업명": company_name,
@@ -357,7 +366,7 @@ def extract_source_accounts(
                 "계정ID": account.get("account_id", ""),
                 "계정명": account.get("account_nm", ""),
                 "재무제표종류": account.get("sj_div", ""),
-                "금액": _to_number(account.get("thstrm_amount")),
+                "금액": _to_number(account.get(amount_field)),
                 "통화": account.get("currency", ""),
                 "접수번호": account.get("rcept_no", ""),
             }

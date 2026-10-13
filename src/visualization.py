@@ -274,9 +274,7 @@ def _latest_common_year(data: pd.DataFrame) -> int:
 
 
 def create_comparison_charts(data: pd.DataFrame, charts_dir: Path) -> list:
-    """가장 최근 공통 연도의 적용 가능한 지표를 기업별로 비교한다."""
-    year = _latest_common_year(data)
-    comparison = data[data["연도"] == year].copy()
+    """같은 연도에 값이 있는 기업이 2개 이상인 지표만 비교한다."""
     specs = [
         ("매출", "조 원", 1e12, "comparison_revenue.png"),
         ("보험서비스수익", "조 원", 1e12, "comparison_insurance_revenue.png"),
@@ -297,9 +295,17 @@ def create_comparison_charts(data: pd.DataFrame, charts_dir: Path) -> list:
     ]
     figures = []
     for metric, unit, scale, filename in specs:
-        plot_data = comparison[["기업명", metric]].dropna()
-        if plot_data.empty:
+        if metric not in data:
             continue
+
+        available = data[["기업명", "연도", metric]].dropna()
+        comparable_years = available.groupby("연도")["기업명"].nunique()
+        comparable_years = comparable_years[comparable_years >= 2]
+        if comparable_years.empty:
+            continue
+
+        year = int(comparable_years.index.max())
+        plot_data = available[available["연도"] == year]
         fig, ax = plt.subplots(figsize=(8, 5))
         ax.bar(
             plot_data["기업명"],

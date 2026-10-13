@@ -35,6 +35,7 @@ if __package__:
         RATE_OUTLIER_COLUMN,
     )
     from .stock_analysis import add_bollinger_bands, add_moving_averages
+    from .star_score import build_star_score
 else:
     from correlation_settings import (
         ROLLING_CORRELATION_SETTINGS,
@@ -63,6 +64,7 @@ else:
         RATE_OUTLIER_COLUMN,
     )
     from stock_analysis import add_bollinger_bands, add_moving_averages
+    from star_score import build_star_score
 
 
 # 1개월 조회에서도 주말·휴일·첫 변화량 행을 제외한 상관계수를 볼 수 있도록
@@ -1131,6 +1133,7 @@ def build_kpi_payload(
             ]
             if not company_trend_rows.empty:
                 trend_rows = company_trend_rows.sort_values("연도").reset_index(drop=True)
+        _, _, score_financial_kpi = _financial_kpis(trend_rows)
         trend_history = []
         for index in range(len(trend_rows)):
             trend_period, _, trend_kpis = _financial_kpis(
@@ -1149,6 +1152,14 @@ def build_kpi_payload(
             if volume_history is not None and not volume_history.empty
             else None
         )
+        financial_trend = _financial_trends(trend_history)
+        market_kpi = _market_kpis(company_prices, company_volume_history)
+        macro_kpi = _macro_kpis(
+            market_macro[market_macro["기업명"] == company_name]
+            if market_macro is not None and not market_macro.empty
+            else None,
+            stock_period=stock_period,
+        )
         companies.append(
             {
                 "company": company_name,
@@ -1158,20 +1169,23 @@ def build_kpi_payload(
                     str(int(value)) for value in ordered_rows["연도"].tolist()
                 ],
                 "financial_history": financial_history,
-                "financial_trend": _financial_trends(trend_history),
+                "financial_trend": financial_trend,
                 "stock_period": stock_period,
                 "financial_kpi": financial_kpi,
-                "market_kpi": _market_kpis(company_prices, company_volume_history),
-                "macro_kpi": _macro_kpis(
-                    market_macro[market_macro["기업명"] == company_name]
-                    if market_macro is not None and not market_macro.empty
-                    else None,
-                    stock_period=stock_period,
+                "market_kpi": market_kpi,
+                "macro_kpi": macro_kpi,
+                "star_score": build_star_score(
+                    analysis_type,
+                    trend_rows,
+                    score_financial_kpi,
+                    financial_trend,
+                    market_kpi,
+                    macro_kpi,
                 ),
             }
         )
     return {
-        "schema_version": "1.6",
+        "schema_version": "1.7",
         "generated_on": date.today().isoformat(),
         "companies": companies,
     }

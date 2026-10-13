@@ -56,6 +56,7 @@ class ResultDashboardViewModelTests(unittest.TestCase):
         self.assertEqual(rows["debt_ratio"]["badges"], ["악화"])
         self.assertEqual(rows["debt_ratio"]["badge_tones"], ["worsening"])
         self.assertEqual(rows["roe"]["badges"], [""])
+        self.assertEqual(rows["roe"]["badge_tones"], ["unavailable"])
 
     def test_csv_preview_keeps_all_columns_and_only_first_five_rows(self):
         frame = pd.DataFrame(

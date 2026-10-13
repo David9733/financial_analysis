@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import queue
 import re
 import shutil
 import threading
@@ -17,6 +19,7 @@ if __package__:  # ``python -m src.app`` 또는 패키지 import
     from .correlation_insight import build_company_correlation_insights
     from .dart_api import CompanyNotFoundError, DartAPIError
     from .financial_analysis import FINAL_COLUMNS, format_result_for_csv
+    from .gpt_analysis import GPTAnalysisError, analyze_kpis, build_fallback_insights
     from .main import (
         ENABLE_GPT_INSIGHTS,
         OUTPUT_DIR,
@@ -27,6 +30,7 @@ else:  # ``python src/app.py``로 직접 실행
     from correlation_insight import build_company_correlation_insights
     from dart_api import CompanyNotFoundError, DartAPIError
     from financial_analysis import FINAL_COLUMNS, format_result_for_csv
+    from gpt_analysis import GPTAnalysisError, analyze_kpis, build_fallback_insights
     from main import (
         ENABLE_GPT_INSIGHTS,
         OUTPUT_DIR,
@@ -40,6 +44,7 @@ PROJECT_ROOT = APP_DIR.parent
 WEB_RUNS_DIR = OUTPUT_DIR / "web_runs"
 WEB_RUN_RETENTION_SECONDS = 60 * 60
 COMPLETED_MARKER_NAME = ".completed"
+GPT_WEB_TIMEOUT_SECONDS = 10.0
 STOCK_PERIOD_LABELS = {
     "1m": "1개월",
     "3m": "3개월",
@@ -343,10 +348,12 @@ app = Flask(
     static_folder=str(PROJECT_ROOT / "static"),
 )
 app.config["MAX_CONTENT_LENGTH"] = 32 * 1024
+app.config["TEMPLATES_AUTO_RELOAD"] = True
 LOGGER = logging.getLogger(__name__)
 PROGRESS_LOCK = threading.Lock()
 ANALYSIS_PROGRESS: dict[str, dict] = {}
 ACTIVE_RUN_IDS: set[str] = set()
+GPT_RUNS: dict[str, dict] = {}
 
 
 def update_analysis_progress(
@@ -403,6 +410,8 @@ def cleanup_expired_web_runs(now: float | None = None) -> None:
         try:
             if completed_marker.is_file() and completed_marker.stat().st_mtime <= cutoff:
                 shutil.rmtree(path)
+                with PROGRESS_LOCK:
+                    GPT_RUNS.pop(path.name, None)
         except FileNotFoundError:
             # 다른 요청이 같은 만료 폴더를 먼저 정리한 경우다.
             continue
@@ -468,7 +477,7 @@ def format_kpi_metric(metric: dict) -> str:
         status_labels = {
             "missing": "출처 데이터 없음",
             "not_applicable": "해당 없음",
-            "no_comparison_period": "비교기간 없음",
+            "no_comparison_period": "-",
             "neutral_direction": "방향성 없음",
         }
         return status_labels.get(metric.get("status"), "확인 불가")
@@ -519,6 +528,27 @@ def build_kpi_cards(payload: dict) -> list[dict]:
                     build_kpi_card_metric(name, metric)
                     for name, metric in company.get("macro_kpi", {}).items()
                 ],
+            }
+        )
+    return cards
+
+
+def build_star_score_cards(payload: dict) -> list[dict]:
+    """5축 점수가 있는 기업만 스타차트 화면 모델로 정규화한다."""
+    cards = []
+    for company in payload.get("companies", []):
+        axes = company.get("star_score", [])
+        if not axes:
+            continue
+        cards.append(
+            {
+                "company": company.get("company", ""),
+                "analysis_type": company.get("analysis_type", ""),
+                "axes": axes,
+                "chart_available": all(
+                    axis.get("status") == "available" and axis.get("score") is not None
+                    for axis in axes
+                ),
             }
         )
     return cards
@@ -627,7 +657,10 @@ def build_financial_kpi_matrix(payload: dict) -> dict:
         tones = []
         for company in companies:
             trend = company.get("financial_trend", {}).get(row["key"], {})
-            badge = trend.get("value") if trend.get("status") == "available" else ""
+            if trend.get("status") == "available":
+                badge = trend.get("value") or ""
+            else:
+                badge = ""
             badges.append(badge or "")
             tones.append(
                 {
@@ -814,6 +847,101 @@ def build_gpt_cards(insights: list[dict], comparisons: list[dict], payload: dict
             }
         )
     return cards, comparison_cards
+
+
+def start_async_gpt_analysis(
+    run_id: str,
+    payload: dict,
+    macro_chart_groups: list[dict],
+    run_dir: Path,
+) -> None:
+    """기본 결과 화면을 막지 않고 GPT 분석을 최대 10초 동안 생성한다."""
+    with PROGRESS_LOCK:
+        GPT_RUNS[run_id] = {
+            "status": "loading",
+            "macro_chart_groups": macro_chart_groups,
+            "updated_at": time.time(),
+        }
+
+    def worker() -> None:
+        with PROGRESS_LOCK:
+            ACTIVE_RUN_IDS.add(run_id)
+        result_queue: queue.Queue = queue.Queue(maxsize=1)
+
+        def request_gpt() -> None:
+            try:
+                result_queue.put(
+                    (
+                        "complete",
+                        analyze_kpis(
+                            payload,
+                            PROJECT_ROOT,
+                            timeout=GPT_WEB_TIMEOUT_SECONDS - 0.5,
+                            max_retries=0,
+                            max_validation_attempts=1,
+                        ),
+                    )
+                )
+            except Exception as error:
+                result_queue.put(("failed", error))
+
+        request_thread = threading.Thread(
+            target=request_gpt,
+            name=f"gpt-request-{run_id[:8]}",
+            daemon=True,
+        )
+        request_thread.start()
+        request_thread.join(GPT_WEB_TIMEOUT_SECONDS)
+
+        notice = ""
+        if request_thread.is_alive():
+            result = None
+            notice = "GPT 분석이 10초 안에 완료되지 않아 계산된 KPI 기반 분석을 표시합니다."
+        else:
+            status, value = result_queue.get_nowait()
+            if status == "complete":
+                result = value
+            else:
+                result = None
+                notice = f"GPT 분석을 불러오지 못해 계산된 KPI 기반 분석을 표시합니다. ({value})"
+
+        try:
+            if result is None:
+                result = build_fallback_insights(payload)
+            insight_cards, comparison_cards = build_gpt_cards(
+                result.get("analyses", []),
+                result.get("comparisons", []),
+                payload,
+            )
+            (run_dir / "gpt_insights.json").write_text(
+                json.dumps(result, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            state = {
+                "status": "complete",
+                "gpt_insights": insight_cards,
+                "gpt_comparisons": comparison_cards,
+                "macro_chart_groups": macro_chart_groups,
+                "notice": notice,
+                "updated_at": time.time(),
+            }
+        except (GPTAnalysisError, KeyError, TypeError, OSError) as error:
+            LOGGER.warning("async_gpt_analysis_failed run_id=%s error=%s", run_id, error)
+            state = {
+                "status": "failed",
+                "message": "GPT 기업 분석을 불러오지 못했습니다.",
+                "updated_at": time.time(),
+            }
+        finally:
+            with PROGRESS_LOCK:
+                GPT_RUNS[run_id] = state
+                ACTIVE_RUN_IDS.discard(run_id)
+
+    threading.Thread(
+        target=worker,
+        name=f"gpt-analysis-{run_id[:8]}",
+        daemon=True,
+    ).start()
 
 
 HEATMAP_FILENAME_PATTERN = re.compile(r"^market_correlation_heatmap_(.+)\.png$")
@@ -1003,8 +1131,9 @@ def analyze():
         ), 400
 
     LOGGER.info(
-        "analysis_started run_id=%s company_count=%d financial_years=%d stock_period=%s",
+        "analysis_started run_id=%s companies=%s company_count=%d financial_years=%d stock_period=%s",
         run_id,
+        companies,
         len(companies),
         number_of_years,
         stock_period,
@@ -1023,6 +1152,7 @@ def analyze():
             progress_callback=lambda stage, percent, message: update_analysis_progress(
                 run_id, stage, percent, message
             ),
+            include_gpt=False,
         )
     except (DartAPIError, CompanyNotFoundError, ValueError) as error:
         update_analysis_progress(run_id, "failed", 100, "분석을 완료하지 못했습니다.")
@@ -1162,17 +1292,34 @@ def analyze():
             "data-quality", "데이터 처리 요약", integrated.quality_log, data_quality_csv_url
         ),
     ]
-    if ENABLE_GPT_INSIGHTS:
+    gpt_loading = False
+    if ENABLE_GPT_INSIGHTS and (
+        integrated.gpt_insights or integrated.gpt_comparisons
+    ):
         gpt_insight_cards, gpt_comparison_cards = build_gpt_cards(
             integrated.gpt_insights,
             integrated.gpt_comparisons,
             integrated.kpi_payload,
+        )
+    elif ENABLE_GPT_INSIGHTS:
+        gpt_insight_cards, gpt_comparison_cards = [], []
+        gpt_loading = True
+        update_analysis_progress(
+            run_id, "gpt", 78, "GPT 자동 인사이트를 백그라운드에서 생성하고 있습니다."
+        )
+        start_async_gpt_analysis(
+            run_id,
+            integrated.kpi_payload,
+            macro_chart_groups,
+            run_dir,
         )
     else:
         gpt_insight_cards, gpt_comparison_cards = [], []
     companies = display["기업명"].drop_duplicates().tolist()
     analysis_mode = "single" if len(companies) == 1 else "comparison"
     kpi_cards = build_kpi_cards(integrated.kpi_payload)
+    star_score_cards = build_star_score_cards(integrated.kpi_payload)
+    update_analysis_progress(run_id, "finalizing", 100, "결과 화면을 정리하고 있습니다.")
     update_analysis_progress(run_id, "complete", 100, "분석이 완료되었습니다.")
     (run_dir / COMPLETED_MARKER_NAME).touch()
     cleanup_expired_web_runs()
@@ -1200,6 +1347,7 @@ def analyze():
         stock_cards=stock_cards,
         stock_period_label=STOCK_PERIOD_LABELS[stock_period],
         kpi_cards=kpi_cards,
+        star_score_cards=star_score_cards,
         headline_kpi_cards=headline_kpi_cards,
         headline_kpi_matrix=build_headline_kpi_matrix(integrated.kpi_payload),
         financial_kpi_matrix=build_financial_kpi_matrix(integrated.kpi_payload),
@@ -1222,6 +1370,10 @@ def analyze():
         gpt_insights=gpt_insight_cards,
         gpt_comparisons=gpt_comparison_cards,
         gpt_enabled=ENABLE_GPT_INSIGHTS,
+        gpt_loading=gpt_loading,
+        gpt_status_url=(
+            url_for("gpt_analysis_result", run_id=run_id) if gpt_loading else None
+        ),
         warnings=integrated.warnings,
         csv_url=csv_url,
         stock_prices_csv_url=stock_prices_csv_url,
@@ -1249,6 +1401,32 @@ def analysis_progress(run_id: str):
             }
         )
     return jsonify(progress)
+
+
+@app.get("/gpt-analysis/<run_id>")
+def gpt_analysis_result(run_id: str):
+    """백그라운드 GPT 분석 상태와 완성된 화면 조각을 반환한다."""
+    if not re.fullmatch(r"[0-9a-f]{32}", run_id):
+        abort(404)
+    with PROGRESS_LOCK:
+        state = GPT_RUNS.get(run_id)
+        snapshot = dict(state) if state is not None else None
+    if snapshot is None:
+        return jsonify({"status": "failed", "message": "GPT 분석 상태를 찾을 수 없습니다."}), 404
+    if snapshot.get("status") == "loading":
+        return jsonify({"status": "loading"})
+    if snapshot.get("status") == "failed":
+        return jsonify(
+            {"status": "failed", "message": snapshot.get("message", "GPT 분석을 불러오지 못했습니다.")}
+        )
+    html = render_template(
+        "_gpt_analysis.html",
+        gpt_insights=snapshot.get("gpt_insights", []),
+        gpt_comparisons=snapshot.get("gpt_comparisons", []),
+        macro_chart_groups=snapshot.get("macro_chart_groups", []),
+        gpt_notice=snapshot.get("notice", ""),
+    )
+    return jsonify({"status": "complete", "html": html})
 
 
 @app.get("/results/<run_id>/<path:filename>")

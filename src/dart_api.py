@@ -217,7 +217,7 @@ class DartClient:
         return companies
 
     def find_company(self, company_name: str) -> dict:
-        """정확한 이름, 부분 이름, 오타 순으로 가장 가까운 기업을 찾는다."""
+        """정확한 이름과 명확한 부분 이름만 선택하고 오타 후보는 안내한다."""
         companies = self.get_corp_codes()
         exact = [item for item in companies if item["corp_name"] == company_name.strip()]
         if len(exact) == 1:
@@ -260,21 +260,16 @@ class DartClient:
                 reverse=True,
             )
             if scored_matches:
-                best_score = scored_matches[0][0]
-                # 자동 선택은 충분히 유사하면서 2위 후보와도 차이가 나는 경우로 제한한다.
-                close_matches = [
-                    item for score, item in scored_matches if score >= best_score - 0.06
-                ]
-                if best_score >= 0.72:
-                    matches = close_matches
-                else:
-                    suggestions = ", ".join(
-                        item["corp_name"] for _, item in scored_matches[:5]
-                    )
-                    raise CompanyNotFoundError(
-                        f"입력한 기업명 '{company_name}'을(를) 찾을 수 없습니다. "
-                        f"비슷한 기업: {suggestions}"
-                    )
+                # 오타 유사도만으로 다른 법인을 자동 선택하면 합병 전후 회사처럼
+                # 이름이 비슷한 별도 법인을 잘못 분석할 수 있다. 사용자가 후보를
+                # 확인하고 정확한 현재 기업명을 다시 입력하도록 안내한다.
+                suggestions = ", ".join(
+                    item["corp_name"] for _, item in scored_matches[:5]
+                )
+                raise CompanyNotFoundError(
+                    f"입력한 기업명 '{company_name}'을(를) 정확히 찾을 수 없습니다. "
+                    f"비슷한 기업: {suggestions}"
+                )
         if len(matches) == 1:
             return matches[0]
         if not matches:

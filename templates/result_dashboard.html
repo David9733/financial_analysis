@@ -133,44 +133,51 @@
     {% endif %}
 
     <nav class="result-tabs" role="tablist" aria-label="분석 결과 영역">
-      <button type="button" role="tab" id="tab-financial" aria-controls="panel-financial" aria-selected="false" data-tab="financial">재무</button>
+      <button type="button" role="tab" id="tab-financial" aria-controls="panel-financial" aria-selected="true" data-tab="financial">재무</button>
       <button type="button" role="tab" id="tab-stock" aria-controls="panel-stock" aria-selected="false" data-tab="stock">주가</button>
       <button type="button" role="tab" id="tab-macro" aria-controls="panel-macro" aria-selected="false" data-tab="macro">매크로</button>
-      <button type="button" role="tab" id="tab-summary" aria-controls="panel-summary" aria-selected="true" data-tab="summary">요약</button>
+      <button type="button" role="tab" id="tab-summary" aria-controls="panel-summary" aria-selected="false" data-tab="summary">요약</button>
     </nav>
 
-    <section id="panel-summary" class="tab-panel" role="tabpanel" aria-labelledby="tab-summary" data-panel="summary">
+    <section id="panel-summary" class="tab-panel" role="tabpanel" aria-labelledby="tab-summary" data-panel="summary" hidden>
       {% set insight_state = namespace(has_items=false) %}
       {% for group in macro_chart_groups %}{% if group.key == 'correlation' %}{% for chart in group.charts %}{% if chart.insight %}{% set insight_state.has_items = true %}{% endif %}{% endfor %}{% endif %}{% endfor %}
-      {% if gpt_enabled or insight_state.has_items %}
+      {% if star_score_cards or gpt_enabled or insight_state.has_items %}
       <section class="combined-insights" aria-labelledby="combined-insights-title">
       <div class="section-heading insight-heading"><div><p class="eyebrow">INSIGHTS</p><h2 id="combined-insights-title">종합 인사이트</h2></div><span>계산된 KPI와 과거 동행성을 서로 다른 분석 방식으로 구분해 제공합니다.</span></div>
 
-      {% if gpt_enabled %}
-      <div class="insight-subheading"><div><p class="eyebrow">GPT ANALYSIS</p><h3>GPT 기업 분석</h3></div><span>계산된 KPI를 해석하며 투자 권유나 미래 주가 예측이 아닙니다.</span></div>
-      {% if gpt_comparisons %}<h4 class="insight-group-title">기업 간 차이</h4>{% endif %}
-      {% if gpt_comparisons %}<div class="comparison-insight-grid">{% for comparison in gpt_comparisons %}<article class="panel comparison-insight-card"><p>{{ comparison.summary }}</p>{{ render_evidence(comparison.evidence, true) }}</article>{% endfor %}</div>{% endif %}
-      {% if gpt_insights %}
-        {% if gpt_comparisons %}<h4 class="insight-group-title company-analysis-title">기업별 분석</h4>{% endif %}
-        <div class="summary-insight-grid">
-          {% for insight in gpt_insights %}
-            <article class="panel insight-card summary-insight-card">
-              <h3>{{ insight.company }}</h3>
-              <section><h4>한줄 요약</h4><p>{{ insight.one_line_summary.summary }}</p>{{ render_evidence(insight.one_line_summary.evidence) }}</section>
-              <div class="signal-grid">
-                <section><h4>긍정적으로 나타난 데이터</h4><ul>{% for item in insight.positive_signals %}<li>{{ item.summary }}</li>{% else %}<li>확인 가능한 신호가 없습니다.</li>{% endfor %}</ul></section>
-                <section><h4>주의해서 볼 데이터</h4><ul>{% for item in insight.caution_signals %}<li>{{ item.summary }}</li>{% else %}<li>확인 가능한 신호가 없습니다.</li>{% endfor %}</ul></section>
-              </div>
-              <section><h4>재무 체질과 시나리오 반응</h4><p>{{ insight.financial_scenario.summary }}</p>{{ render_evidence(insight.financial_scenario.evidence) }}</section>
-              <section><h4>종합 분석</h4><p>{{ insight.overall_summary.summary }}</p>{{ render_evidence(insight.overall_summary.evidence) }}</section>
-              <details class="insight-details"><summary>{{ insight.company }} 세부 분석 펼치기</summary><div class="insight-details-body">{{ render_insight_detail(insight, macro_chart_groups) }}</div></details>
-            </article>
+      {% if star_score_cards %}
+      <section class="star-score-section" aria-labelledby="star-score-title">
+        <div class="insight-subheading star-score-heading"><div><p class="eyebrow">KPI SCORE</p><h3 id="star-score-title">기업 역량 스타차트</h3></div><span>계산된 KPI와 최근 3개년 추세를 0~100점으로 요약한 참고 지표입니다.</span></div>
+        <div class="star-company-controls" role="group" aria-label="스타차트에 표시할 기업">
+          {% for card in star_score_cards %}
+          <button type="button" class="star-company-toggle star-series-{{ loop.index0 % 6 }}" data-star-toggle="{{ loop.index0 }}" aria-pressed="{{ 'true' if loop.index0 < 2 else 'false' }}"><span class="star-series-swatch" aria-hidden="true"></span>{{ card.company }}</button>
           {% endfor %}
         </div>
-      {% elif not gpt_comparisons %}<div class="empty-state">GPT 분석을 사용할 수 없어 계산된 KPI만 표시합니다.</div>{% endif %}
+        <div class="star-chart-wrap">
+          <svg id="company-star-chart" class="company-star-chart" viewBox="0 0 640 540" role="img" aria-labelledby="star-chart-svg-title star-chart-svg-desc">
+            <title id="star-chart-svg-title">기업별 5축 KPI 스타차트</title>
+            <desc id="star-chart-svg-desc">성장성, 수익성, 재무 안정성, 효율성, 시장흐름 점수를 기업별로 비교합니다.</desc>
+          </svg>
+          <p id="star-chart-status" class="star-chart-status" aria-live="polite"></p>
+        </div>
+        <p class="star-score-notice"><strong>업종별 평가 기준:</strong> 일반기업은 매출, 이익률, 부채와 매출채권 회전일수를 반영하고, 금융업은 순이자손익, 순수수료손익, 자기자본비중과 자산효율을 반영하며, 보험업은 보험서비스수익, 보험서비스마진, 자기자본비중과 보험 및 투자수익의 자산효율을 반영합니다. 시장흐름은 모든 업종에 동일한 주가 및 시장지수 기준을 적용합니다.</p>
+        <script id="star-score-data" type="application/json">{{ star_score_cards | tojson }}</script>
+      </section>
       {% endif %}
 
-      {% if insight_state.has_items and not gpt_insights %}
+      {% if gpt_enabled %}
+      <div class="insight-subheading"><div><p class="eyebrow">GPT ANALYSIS</p><h3>GPT 기업 분석</h3></div><span>계산된 KPI를 해석하며 투자 권유나 미래 주가 예측이 아닙니다.</span></div>
+      <div id="gpt-analysis-content"{% if gpt_loading %} data-gpt-status-url="{{ gpt_status_url }}"{% endif %} aria-live="polite">
+        {% if gpt_loading %}
+          <div class="gpt-analysis-loading" role="status"><span class="gpt-loading-spinner" aria-hidden="true"></span><div><strong>GPT 기업 분석을 생성하고 있습니다.</strong><p>재무, 주가와 매크로 결과는 먼저 확인할 수 있으며 최대 10초 동안 기다립니다.</p></div></div>
+        {% else %}
+          {% set gpt_notice = '' %}{% include '_gpt_analysis.html' %}
+        {% endif %}
+      </div>
+      {% endif %}
+
+      {% if insight_state.has_items and not gpt_enabled %}
         <div class="insight-subheading correlation-subheading"><div><p class="eyebrow">CORRELATION ANALYSIS</p><h3>상관관계 분석</h3></div><span>히트맵에서 계산된 과거 동행성과 매크로 레이더 결과입니다.</span></div>
         <div class="insight-grid">
           {% for group in macro_chart_groups %}{% if group.key == 'correlation' %}{% for chart in group.charts %}{% if chart.insight_sections %}<article class="panel insight-summary-card correlation-insight-card"><p class="eyebrow">상관관계</p><h3>{{ chart.company or '전체 기업' }}</h3><section><h4>조회기간 환경</h4><p>{{ chart.insight_sections.environment }}</p></section>{% if chart.insight_sections.evidence %}<section><h4>시장 대비 노출 근거</h4><ul>{% for item in chart.insight_sections.evidence %}<li>{{ item }}</li>{% endfor %}</ul></section>{% endif %}{% if chart.insight_sections.conclusion %}<section class="correlation-conclusion"><h4>핵심 판정</h4><p>{{ chart.insight_sections.conclusion }}</p></section>{% endif %}{% if chart.insight_sections.notice %}<p class="correlation-notice">{{ chart.insight_sections.notice }}</p>{% endif %}</article>{% endif %}{% endfor %}{% endif %}{% endfor %}
@@ -191,7 +198,7 @@
       {% endfor %}
     </section>
 
-    <section id="panel-financial" class="tab-panel" role="tabpanel" aria-labelledby="tab-financial" data-panel="financial" hidden>
+    <section id="panel-financial" class="tab-panel" role="tabpanel" aria-labelledby="tab-financial" data-panel="financial">
       <div class="section-heading"><div><p class="eyebrow">FINANCIALS</p><h2>재무 분석</h2></div><span>연간 사업보고서 기준</span></div>
       {{ render_matrix('전체 재무 KPI 비교', financial_kpi_matrix, '배지는 최근 3개 연속 사업연도의 흐름을 개선, 악화, 보합, 변동으로 요약하며, 오른쪽 수치는 최신 연도 값입니다.') }}
       {% if chart_urls %}<div class="chart-grid result-chart-grid">{% for chart_url in chart_urls %}<article class="chart-card"><img src="{{ chart_url }}" alt="재무분석 차트 {{ loop.index }}" loading="lazy"></article>{% endfor %}</div>{% endif %}
@@ -238,7 +245,7 @@
     const resultTabs = [...document.querySelectorAll('[data-tab]')];
     const resultPanels = [...document.querySelectorAll('[data-panel]')];
     function activateResultTab(name, updateHash = true) {
-      const selected = resultTabs.some((tab) => tab.dataset.tab === name) ? name : 'summary';
+      const selected = resultTabs.some((tab) => tab.dataset.tab === name) ? name : 'financial';
       resultTabs.forEach((tab) => { const active = tab.dataset.tab === selected; tab.setAttribute('aria-selected', String(active)); tab.tabIndex = active ? 0 : -1; });
       resultPanels.forEach((panel) => { panel.hidden = panel.dataset.panel !== selected; });
       if (updateHash) history.replaceState(null, '', `#${selected}`);
@@ -254,6 +261,32 @@
       });
     });
     activateResultTab(window.location.hash.slice(1), false);
+
+    const gptContent = document.getElementById('gpt-analysis-content');
+    if (gptContent?.dataset.gptStatusUrl) {
+      const gptStatusUrl = gptContent.dataset.gptStatusUrl;
+      const refreshGptAnalysis = async () => {
+        try {
+          const response = await fetch(gptStatusUrl, { cache: 'no-store' });
+          const result = await response.json();
+          if (result.status === 'complete') {
+            gptContent.innerHTML = result.html;
+            gptContent.removeAttribute('data-gpt-status-url');
+            return;
+          }
+          if (result.status === 'failed') {
+            gptContent.innerHTML = `<div class="empty-state">${result.message || 'GPT 기업 분석을 불러오지 못했습니다.'}</div>`;
+            gptContent.removeAttribute('data-gpt-status-url');
+            return;
+          }
+        } catch (_) {
+          // 일시적인 상태 조회 실패는 다음 조회에서 다시 확인한다.
+        }
+        window.setTimeout(refreshGptAnalysis, 600);
+      };
+      refreshGptAnalysis();
+    }
+
     const chartFilters = [...document.querySelectorAll('[data-chart-filter]')];
     function getChartControls(button) {
       const panel = button.closest('.tab-panel');
@@ -300,6 +333,139 @@
         previewTabs[next].focus(); activatePreviewTab(previewTabs[next]);
       });
     });
+
+    const helpItems = [...document.querySelectorAll('.kpi-help-item')];
+    let activeHelp = null;
+    function positionHelp(owner, tooltip) {
+      const anchor = owner.querySelector('.kpi-help-badge') || owner;
+      const anchorRect = anchor.getBoundingClientRect();
+      const gap = 10;
+      const edge = 12;
+      const tooltipWidth = tooltip.offsetWidth;
+      const tooltipHeight = tooltip.offsetHeight;
+      let left = anchorRect.right + gap;
+      if (left + tooltipWidth > window.innerWidth - edge) {
+        left = Math.max(edge, anchorRect.left - tooltipWidth - gap);
+      }
+      const top = Math.min(
+        Math.max(edge, anchorRect.top + anchorRect.height / 2 - tooltipHeight / 2),
+        Math.max(edge, window.innerHeight - tooltipHeight - edge),
+      );
+      tooltip.style.left = `${left}px`;
+      tooltip.style.top = `${top}px`;
+      tooltip.style.right = 'auto';
+    }
+    function hideHelp(owner, force = false) {
+      if (!activeHelp || (owner && activeHelp.owner !== owner)) return;
+      const { owner: activeOwner, tooltip } = activeHelp;
+      if (!force && (activeOwner.matches(':hover') || activeOwner.contains(document.activeElement))) return;
+      tooltip.classList.remove('is-floating', 'is-warning-floating');
+      tooltip.removeAttribute('style');
+      activeOwner.appendChild(tooltip);
+      activeHelp = null;
+    }
+    function showHelp(owner) {
+      if (activeHelp && activeHelp.owner === owner) {
+        positionHelp(owner, activeHelp.tooltip);
+        return;
+      }
+      const tooltip = owner.querySelector('.kpi-help-tooltip');
+      if (!tooltip) return;
+      if (activeHelp) hideHelp(null, true);
+      if (!activeHelp) {
+        document.body.appendChild(tooltip);
+        tooltip.classList.add('is-floating');
+        tooltip.classList.toggle('is-warning-floating', owner.classList.contains('kpi-warning-item'));
+        activeHelp = { owner, tooltip };
+      }
+      positionHelp(owner, tooltip);
+    }
+    helpItems.forEach((owner) => {
+      owner.addEventListener('mouseenter', () => showHelp(owner));
+      owner.addEventListener('mouseleave', () => hideHelp(owner));
+      owner.addEventListener('focusin', () => showHelp(owner));
+      owner.addEventListener('focusout', () => hideHelp(owner));
+      owner.addEventListener('click', () => owner.focus());
+    });
+    window.addEventListener('resize', () => {
+      if (activeHelp) positionHelp(activeHelp.owner, activeHelp.tooltip);
+    });
+    window.addEventListener('scroll', () => {
+      if (activeHelp) positionHelp(activeHelp.owner, activeHelp.tooltip);
+    }, true);
+
+    const starDataElement = document.getElementById('star-score-data');
+    if (starDataElement) {
+      const starCards = JSON.parse(starDataElement.textContent);
+      const starSvg = document.getElementById('company-star-chart');
+      const starStatus = document.getElementById('star-chart-status');
+      const starToggles = [...document.querySelectorAll('[data-star-toggle]')];
+      const svgNamespace = 'http://www.w3.org/2000/svg';
+      const center = { x: 320, y: 255 };
+      const radius = 170;
+      const labels = ['성장성', '수익성', '재무 안정성', '효율성', '시장흐름'];
+      const pointAt = (index, scale) => {
+        const angle = (-90 + index * 72) * Math.PI / 180;
+        return { x: center.x + Math.cos(angle) * radius * scale, y: center.y + Math.sin(angle) * radius * scale };
+      };
+      const pointsText = (values) => values.map((value, index) => {
+        const point = pointAt(index, value / 100);
+        return `${point.x.toFixed(2)},${point.y.toFixed(2)}`;
+      }).join(' ');
+      const addSvg = (name, attributes, parent = starSvg) => {
+        const element = document.createElementNS(svgNamespace, name);
+        Object.entries(attributes).forEach(([key, value]) => element.setAttribute(key, value));
+        parent.appendChild(element);
+        return element;
+      };
+      [25, 50, 75, 100].forEach((value) => {
+        addSvg('polygon', { points: pointsText(labels.map(() => value)), class: 'star-grid-ring' });
+      });
+      labels.forEach((label, index) => {
+        const outer = pointAt(index, 1);
+        addSvg('line', { x1: center.x, y1: center.y, x2: outer.x, y2: outer.y, class: 'star-axis-line' });
+        const labelPoint = pointAt(index, 1.22);
+        const text = addSvg('text', { x: labelPoint.x, y: labelPoint.y, class: 'star-axis-label', 'text-anchor': index === 0 ? 'middle' : (index === 1 || index === 2 ? 'start' : 'end'), 'dominant-baseline': 'middle' });
+        text.textContent = label;
+      });
+      [25, 50, 75, 100].forEach((value) => {
+        const y = center.y - radius * value / 100;
+        const text = addSvg('text', { x: center.x + 7, y: y + 3, class: 'star-scale-label' });
+        text.textContent = value;
+      });
+      const seriesLayer = addSvg('g', { class: 'star-series-layer' });
+      const seriesGroups = starCards.map((card, index) => {
+        const group = addSvg('g', { class: `star-series-group star-series-${index % 6}`, 'data-star-series': index }, seriesLayer);
+        if (card.chart_available) {
+          const scores = card.axes.map((axis) => axis.score);
+          const polygon = addSvg('polygon', { points: pointsText(scores), class: 'star-series-area' }, group);
+          const outline = addSvg('polygon', { points: pointsText(scores), class: 'star-series-outline' }, group);
+          card.axes.forEach((axis, axisIndex) => {
+            const point = pointAt(axisIndex, axis.score / 100);
+            const circle = addSvg('circle', { cx: point.x, cy: point.y, r: 5, class: 'star-series-point', tabindex: '0', role: 'img', 'aria-label': `${card.company} ${axis.label} ${axis.score}점` }, group);
+            const title = addSvg('title', {}, circle);
+            title.textContent = `${card.company}, ${axis.label} ${axis.score}점`;
+          });
+        }
+        return group;
+      });
+      function updateStarChart() {
+        const active = [];
+        starToggles.forEach((button, index) => {
+          const pressed = button.getAttribute('aria-pressed') === 'true';
+          seriesGroups[index].toggleAttribute('hidden', !pressed);
+          if (pressed) active.push(starCards[index].chart_available ? starCards[index].company : `${starCards[index].company}(자료 부족)`);
+        });
+        starStatus.textContent = active.length ? `${active.join(', ')} 표시 중` : '표시할 기업을 선택해 주세요.';
+      }
+      starToggles.forEach((button) => {
+        button.addEventListener('click', () => {
+          button.setAttribute('aria-pressed', String(button.getAttribute('aria-pressed') !== 'true'));
+          updateStarChart();
+        });
+      });
+      updateStarChart();
+    }
 
   </script>
 </body>
