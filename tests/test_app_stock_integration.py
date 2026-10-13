@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import unittest
 import tempfile
 import time
@@ -8,11 +9,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pandas as pd
+from PIL import Image
 
 from src.app import (
     GPT_RUNS,
     KPI_HELP_TEXT,
     app,
+    build_chart_url,
     build_stock_chart_items,
     format_kpi_metric,
     start_async_gpt_analysis,
@@ -251,6 +254,38 @@ class AppStockIntegrationTests(unittest.TestCase):
         self.assertIn(f'data-gpt-status-url="/gpt-analysis/{run_id}"', html)
         self.assertFalse(run_analysis.call_args.kwargs["include_gpt"])
         start_gpt.assert_called_once()
+
+    @patch.dict(os.environ, {"VERCEL": "1"})
+    @patch("src.app.run_gpt_analysis_with_timeout")
+    @patch("src.app.run_integrated_analysis")
+    def test_vercel_renders_gpt_in_initial_response(
+        self, run_analysis, run_gpt
+    ):
+        result = self.fake_result()
+        result.gpt_insights = []
+        result.gpt_comparisons = []
+        run_analysis.return_value = result
+        run_gpt.return_value = ([], [], "KPI 기반 대체 분석입니다.")
+
+        response = self.client.post(
+            "/analyze",
+            data={"company": "삼성전자", "number_of_years": "5", "stock_period": "1y"},
+        )
+        html = response.get_data(as_text=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn('data-gpt-status-url="/', html)
+        self.assertIn("KPI 기반 대체 분석입니다.", html)
+        run_gpt.assert_called_once_with(result.kpi_payload)
+
+    def test_vercel_chart_is_embedded_as_webp_data_url(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "chart.png"
+            Image.new("RGB", (40, 30), "white").save(path)
+            with patch.dict(os.environ, {"VERCEL": "1"}), app.test_request_context():
+                chart_url = build_chart_url(path, "a" * 32, "charts")
+
+        self.assertTrue(chart_url.startswith("data:image/webp;base64,"))
 
     @patch("src.app.analyze_kpis")
     def test_async_gpt_endpoint_returns_completed_fragment(self, analyze_kpis):

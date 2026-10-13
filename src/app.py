@@ -2,18 +2,22 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
+import os
 import queue
 import re
 import shutil
 import threading
 import time
+from io import BytesIO
 from pathlib import Path
 from uuid import uuid4
 
 import pandas as pd
 from flask import Flask, abort, jsonify, render_template, request, send_from_directory, url_for
+from PIL import Image
 
 if __package__:  # ``python -m src.app`` 또는 패키지 import
     from .correlation_insight import build_company_correlation_insights
@@ -45,6 +49,8 @@ WEB_RUNS_DIR = OUTPUT_DIR / "web_runs"
 WEB_RUN_RETENTION_SECONDS = 60 * 60
 COMPLETED_MARKER_NAME = ".completed"
 GPT_WEB_TIMEOUT_SECONDS = 10.0
+VERCEL_INLINE_CHART_MAX_WIDTH = 1200
+VERCEL_INLINE_CHART_QUALITY = 78
 STOCK_PERIOD_LABELS = {
     "1m": "1개월",
     "3m": "3개월",
@@ -944,6 +950,51 @@ def start_async_gpt_analysis(
     ).start()
 
 
+def run_gpt_analysis_with_timeout(payload: dict) -> tuple[list[dict], list[dict], str]:
+    """서버리스 요청 안에서 GPT를 최대 10초 기다리고 항상 분석 카드를 반환한다."""
+    result_queue: queue.Queue = queue.Queue(maxsize=1)
+
+    def request_gpt() -> None:
+        try:
+            result_queue.put(
+                (
+                    "complete",
+                    analyze_kpis(
+                        payload,
+                        PROJECT_ROOT,
+                        timeout=GPT_WEB_TIMEOUT_SECONDS - 0.5,
+                        max_retries=0,
+                        max_validation_attempts=1,
+                    ),
+                )
+            )
+        except Exception as error:
+            result_queue.put(("failed", error))
+
+    request_thread = threading.Thread(target=request_gpt, daemon=True)
+    request_thread.start()
+    request_thread.join(GPT_WEB_TIMEOUT_SECONDS)
+
+    notice = ""
+    if request_thread.is_alive():
+        result = build_fallback_insights(payload)
+        notice = "GPT 분석이 10초 안에 완료되지 않아 계산된 KPI 기반 분석을 표시합니다."
+    else:
+        status, value = result_queue.get_nowait()
+        if status == "complete":
+            result = value
+        else:
+            result = build_fallback_insights(payload)
+            notice = f"GPT 분석을 불러오지 못해 계산된 KPI 기반 분석을 표시합니다. ({value})"
+
+    insight_cards, comparison_cards = build_gpt_cards(
+        result.get("analyses", []),
+        result.get("comparisons", []),
+        payload,
+    )
+    return insight_cards, comparison_cards, notice
+
+
 HEATMAP_FILENAME_PATTERN = re.compile(r"^market_correlation_heatmap_(.+)\.png$")
 
 STOCK_CHART_GROUPS = (
@@ -967,6 +1018,35 @@ def _stock_chart_group(filename: str) -> str:
     if filename.startswith(("macro_", "daily_change_")):
         return "macro"
     return "correlation"
+
+
+def build_chart_url(path: Path, run_id: str, folder: str) -> str:
+    """Vercel에서는 임시 파일 대신 압축된 차트를 HTML에 직접 포함한다."""
+    if not os.getenv("VERCEL"):
+        return url_for("run_file", run_id=run_id, filename=f"{folder}/{path.name}")
+
+    try:
+        with Image.open(path) as source:
+            image = source.convert("RGB")
+            if image.width > VERCEL_INLINE_CHART_MAX_WIDTH:
+                height = round(image.height * VERCEL_INLINE_CHART_MAX_WIDTH / image.width)
+                image = image.resize(
+                    (VERCEL_INLINE_CHART_MAX_WIDTH, height),
+                    Image.Resampling.LANCZOS,
+                )
+            buffer = BytesIO()
+            image.save(
+                buffer,
+                format="WEBP",
+                quality=VERCEL_INLINE_CHART_QUALITY,
+                method=4,
+            )
+        encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+        return f"data:image/webp;base64,{encoded}"
+    except (OSError, ValueError):
+        LOGGER.warning("chart_inline_encoding_failed path=%s", path, exc_info=True)
+        encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+        return f"data:image/png;base64,{encoded}"
 
 
 def build_correlation_insight_sections(insight: str | None) -> dict | None:
@@ -1046,9 +1126,7 @@ def build_stock_chart_items(
                 break
         items.append(
             {
-                "url": url_for(
-                    "run_file", run_id=run_id, filename=f"stock_charts/{path.name}"
-                ),
+                "url": build_chart_url(path, run_id, "stock_charts"),
                 "filename": path.name,
                 "insight": insight,
                 "insight_sections": build_correlation_insight_sections(insight),
@@ -1191,7 +1269,7 @@ def analyze():
     charts_dir = run_dir / "charts"
     chart_files = sorted(path.name for path in charts_dir.glob("*.png"))
     chart_urls = [
-        url_for("run_file", run_id=run_id, filename=f"charts/{filename}")
+        build_chart_url(charts_dir / filename, run_id, "charts")
         for filename in chart_files
     ]
     stock_charts_dir = run_dir / "stock_charts"
@@ -1293,6 +1371,7 @@ def analyze():
         ),
     ]
     gpt_loading = False
+    gpt_notice = ""
     if ENABLE_GPT_INSIGHTS and (
         integrated.gpt_insights or integrated.gpt_comparisons
     ):
@@ -1302,17 +1381,22 @@ def analyze():
             integrated.kpi_payload,
         )
     elif ENABLE_GPT_INSIGHTS:
-        gpt_insight_cards, gpt_comparison_cards = [], []
-        gpt_loading = True
         update_analysis_progress(
-            run_id, "gpt", 78, "GPT 자동 인사이트를 백그라운드에서 생성하고 있습니다."
+            run_id, "gpt", 78, "GPT 자동 인사이트를 생성하고 있습니다."
         )
-        start_async_gpt_analysis(
-            run_id,
-            integrated.kpi_payload,
-            macro_chart_groups,
-            run_dir,
-        )
+        if os.getenv("VERCEL"):
+            gpt_insight_cards, gpt_comparison_cards, gpt_notice = (
+                run_gpt_analysis_with_timeout(integrated.kpi_payload)
+            )
+        else:
+            gpt_insight_cards, gpt_comparison_cards = [], []
+            gpt_loading = True
+            start_async_gpt_analysis(
+                run_id,
+                integrated.kpi_payload,
+                macro_chart_groups,
+                run_dir,
+            )
     else:
         gpt_insight_cards, gpt_comparison_cards = [], []
     companies = display["기업명"].drop_duplicates().tolist()
@@ -1369,6 +1453,7 @@ def analyze():
         market_overview=build_market_overview_cards(integrated.market_overview),
         gpt_insights=gpt_insight_cards,
         gpt_comparisons=gpt_comparison_cards,
+        gpt_notice=gpt_notice,
         gpt_enabled=ENABLE_GPT_INSIGHTS,
         gpt_loading=gpt_loading,
         gpt_status_url=(
