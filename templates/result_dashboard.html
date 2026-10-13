@@ -175,6 +175,7 @@
           {% include '_gpt_analysis.html' %}
         {% endif %}
       </div>
+      {% if gpt_loading and gpt_request_data %}<script id="gpt-request-data" type="application/json">{{ gpt_request_data | tojson }}</script>{% endif %}
       {% endif %}
 
       {% if insight_state.has_items and not gpt_enabled %}
@@ -265,9 +266,15 @@
     const gptContent = document.getElementById('gpt-analysis-content');
     if (gptContent?.dataset.gptStatusUrl) {
       const gptStatusUrl = gptContent.dataset.gptStatusUrl;
+      const gptRequestData = document.getElementById('gpt-request-data');
       const refreshGptAnalysis = async () => {
         try {
-          const response = await fetch(gptStatusUrl, { cache: 'no-store' });
+          const response = await fetch(gptStatusUrl, gptRequestData ? {
+            method: 'POST',
+            cache: 'no-store',
+            headers: {'Content-Type': 'application/json'},
+            body: gptRequestData.textContent,
+          } : { cache: 'no-store' });
           const result = await response.json();
           if (result.status === 'complete') {
             gptContent.innerHTML = result.html;
@@ -280,8 +287,14 @@
             return;
           }
         } catch (_) {
-          // 일시적인 상태 조회 실패는 다음 조회에서 다시 확인한다.
+          if (gptRequestData) {
+            gptContent.innerHTML = '<div class="empty-state">GPT 기업 분석 요청이 중단되었습니다.</div>';
+            gptContent.removeAttribute('data-gpt-status-url');
+            return;
+          }
+          // 로컬 백그라운드 상태 조회 실패는 다음 조회에서 다시 확인한다.
         }
+        if (gptRequestData) return;
         window.setTimeout(refreshGptAnalysis, 600);
       };
       refreshGptAnalysis();

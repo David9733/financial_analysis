@@ -150,6 +150,7 @@
     const progressMessage = document.querySelector('#progress-message');
     const submitStatus = document.querySelector('#analysis-submit-status');
     const progressStages = ['financial', 'market', 'macro', 'gpt', 'finalizing', 'complete'];
+    let highestProgressPercent = 0;
 
     function showSubmitStatus(message = '분석 요청을 전송하고 있습니다.') {
       submitStatus.querySelector('span:last-child').textContent = message;
@@ -157,9 +158,13 @@
     }
 
     function renderProgress(progress) {
+      const incomingPercent = Number(progress.percent) || 0;
+      if (progress.stage === 'waiting' && highestProgressPercent > 0) return;
+      if (incomingPercent < highestProgressPercent && progress.stage !== 'failed') return;
+      highestProgressPercent = Math.max(highestProgressPercent, incomingPercent);
       progressPanel.hidden = false;
-      progressBar.style.width = `${progress.percent}%`;
-      progressPercent.textContent = `${progress.percent}%`;
+      progressBar.style.width = `${highestProgressPercent}%`;
+      progressPercent.textContent = `${highestProgressPercent}%`;
       progressMessage.textContent = progress.message;
       const currentIndex = progressStages.indexOf(progress.stage);
       document.querySelectorAll('.progress-steps li').forEach((item) => {

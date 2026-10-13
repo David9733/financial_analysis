@@ -256,16 +256,12 @@ class AppStockIntegrationTests(unittest.TestCase):
         start_gpt.assert_called_once()
 
     @patch.dict(os.environ, {"VERCEL": "1"})
-    @patch("src.app.run_gpt_analysis_with_timeout")
     @patch("src.app.run_integrated_analysis")
-    def test_vercel_renders_gpt_in_initial_response(
-        self, run_analysis, run_gpt
-    ):
+    def test_vercel_returns_page_before_requesting_gpt(self, run_analysis):
         result = self.fake_result()
         result.gpt_insights = []
         result.gpt_comparisons = []
         run_analysis.return_value = result
-        run_gpt.return_value = ([], [], "KPI 기반 대체 분석입니다.")
 
         response = self.client.post(
             "/analyze",
@@ -274,9 +270,24 @@ class AppStockIntegrationTests(unittest.TestCase):
         html = response.get_data(as_text=True)
 
         self.assertEqual(response.status_code, 200)
-        self.assertNotIn('data-gpt-status-url="/', html)
-        self.assertIn("KPI 기반 대체 분석입니다.", html)
-        run_gpt.assert_called_once_with(result.kpi_payload)
+        self.assertIn('data-gpt-status-url="/gpt-analysis/', html)
+        self.assertIn('id="gpt-request-data"', html)
+        self.assertIn("GPT 기업 분석을 생성하고 있습니다.", html)
+        self.assertIn("method: 'POST'", html)
+
+    @patch("src.app.run_gpt_analysis_with_timeout")
+    def test_stateless_gpt_post_returns_completed_fragment(self, run_gpt):
+        run_gpt.return_value = ([], [], "KPI 기반 대체 분석입니다.")
+        response = self.client.post(
+            f"/gpt-analysis/{'e' * 32}",
+            json={"payload": self.fake_result().kpi_payload, "macro_chart_groups": []},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["status"], "complete")
+        self.assertIn("KPI 기반 대체 분석입니다.", payload["html"])
+        run_gpt.assert_called_once()
 
     def test_vercel_chart_is_embedded_as_webp_data_url(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -653,6 +664,8 @@ class AppStockIntegrationTests(unittest.TestCase):
         self.assertIn("Promise.all([analysisRequest, minimumLoadingTime])", html)
         self.assertIn("response.status !== 400", html)
         self.assertIn("분석 요청이 중단되었습니다.", html)
+        self.assertIn("highestProgressPercent", html)
+        self.assertIn("incomingPercent < highestProgressPercent", html)
 
     @patch("src.app.run_integrated_analysis")
     def test_six_month_stock_period_is_available(self, run_analysis):

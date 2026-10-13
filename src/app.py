@@ -1146,6 +1146,24 @@ def group_stock_chart_items(items: list[dict]) -> list[dict]:
     return groups
 
 
+def compact_gpt_macro_groups(groups: list[dict]) -> list[dict]:
+    """GPT 후속 요청에는 차트 이미지 없이 상관관계 설명만 전달한다."""
+    return [
+        {
+            "key": group.get("key"),
+            "charts": [
+                {
+                    "company": chart.get("company"),
+                    "insight_sections": chart.get("insight_sections"),
+                }
+                for chart in group.get("charts", [])
+            ],
+        }
+        for group in groups
+        if group.get("key") == "correlation"
+    ]
+
+
 @app.get("/")
 def index():
     return render_template(
@@ -1372,6 +1390,7 @@ def analyze():
     ]
     gpt_loading = False
     gpt_notice = ""
+    gpt_request_data = None
     if ENABLE_GPT_INSIGHTS and (
         integrated.gpt_insights or integrated.gpt_comparisons
     ):
@@ -1385,9 +1404,12 @@ def analyze():
             run_id, "gpt", 78, "GPT 자동 인사이트를 생성하고 있습니다."
         )
         if os.getenv("VERCEL"):
-            gpt_insight_cards, gpt_comparison_cards, gpt_notice = (
-                run_gpt_analysis_with_timeout(integrated.kpi_payload)
-            )
+            gpt_insight_cards, gpt_comparison_cards = [], []
+            gpt_loading = True
+            gpt_request_data = {
+                "payload": integrated.kpi_payload,
+                "macro_chart_groups": compact_gpt_macro_groups(macro_chart_groups),
+            }
         else:
             gpt_insight_cards, gpt_comparison_cards = [], []
             gpt_loading = True
@@ -1454,6 +1476,7 @@ def analyze():
         gpt_insights=gpt_insight_cards,
         gpt_comparisons=gpt_comparison_cards,
         gpt_notice=gpt_notice,
+        gpt_request_data=gpt_request_data,
         gpt_enabled=ENABLE_GPT_INSIGHTS,
         gpt_loading=gpt_loading,
         gpt_status_url=(
@@ -1488,11 +1511,36 @@ def analysis_progress(run_id: str):
     return jsonify(progress)
 
 
-@app.get("/gpt-analysis/<run_id>")
+@app.route("/gpt-analysis/<run_id>", methods=["GET", "POST"])
 def gpt_analysis_result(run_id: str):
     """백그라운드 GPT 분석 상태와 완성된 화면 조각을 반환한다."""
     if not re.fullmatch(r"[0-9a-f]{32}", run_id):
         abort(404)
+    if request.method == "POST":
+        if request.content_length and request.content_length > 1_000_000:
+            return jsonify({"status": "failed", "message": "GPT 분석 요청이 너무 큽니다."}), 413
+        body = request.get_json(silent=True) or {}
+        payload = body.get("payload")
+        companies = payload.get("companies") if isinstance(payload, dict) else None
+        if not isinstance(companies, list) or not 1 <= len(companies) <= 10:
+            return jsonify({"status": "failed", "message": "GPT 분석 데이터가 올바르지 않습니다."}), 400
+        try:
+            insight_cards, comparison_cards, notice = run_gpt_analysis_with_timeout(
+                payload
+            )
+            html = render_template(
+                "_gpt_analysis.html",
+                gpt_insights=insight_cards,
+                gpt_comparisons=comparison_cards,
+                macro_chart_groups=body.get("macro_chart_groups", []),
+                gpt_notice=notice,
+            )
+            return jsonify({"status": "complete", "html": html})
+        except (GPTAnalysisError, KeyError, TypeError, ValueError) as error:
+            LOGGER.warning("stateless_gpt_analysis_failed run_id=%s error=%s", run_id, error)
+            return jsonify(
+                {"status": "failed", "message": "GPT 기업 분석을 불러오지 못했습니다."}
+            )
     with PROGRESS_LOCK:
         state = GPT_RUNS.get(run_id)
         snapshot = dict(state) if state is not None else None
