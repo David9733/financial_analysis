@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from src import app as app_module
-from src.main import CLI_OUTPUT_DIR, OUTPUT_DIR
+from src.main import CLI_OUTPUT_DIR, OUTPUT_DIR, PROJECT_ROOT, resolve_runtime_root
 
 
 class OutputLifecycleTests(unittest.TestCase):
@@ -36,6 +36,26 @@ class OutputLifecycleTests(unittest.TestCase):
     def test_cli_and_web_outputs_use_separate_directories(self):
         self.assertEqual(CLI_OUTPUT_DIR, OUTPUT_DIR / "cli")
         self.assertEqual(app_module.WEB_RUNS_DIR, OUTPUT_DIR / "web_runs")
+
+    def test_runtime_root_uses_project_root_locally(self):
+        self.assertEqual(resolve_runtime_root({}), PROJECT_ROOT)
+
+    def test_runtime_root_uses_temporary_directory_on_vercel(self):
+        self.assertEqual(
+            resolve_runtime_root({"VERCEL": "1"}),
+            Path("/tmp") / "financial_analysis",
+        )
+
+    def test_runtime_root_allows_an_explicit_override(self):
+        self.assertEqual(
+            resolve_runtime_root(
+                {
+                    "VERCEL": "1",
+                    "FINANCIAL_ANALYSIS_RUNTIME_DIR": "/tmp/custom-analysis",
+                }
+            ),
+            Path("/tmp/custom-analysis"),
+        )
 
     def test_cleanup_removes_only_expired_completed_runs(self):
         now = 10_000.0

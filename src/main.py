@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import json
+import os
 import shutil
 import sys
 import time
@@ -126,9 +127,23 @@ NUMBER_OF_YEARS = 5
 
 APP_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = APP_DIR.parent
-OUTPUT_DIR = PROJECT_ROOT / "output"
+
+
+def resolve_runtime_root(environ: dict[str, str] | None = None) -> Path:
+    """배포 환경에서 생성 파일을 저장할 쓰기 가능한 루트를 반환한다."""
+    environment = os.environ if environ is None else environ
+    configured_root = environment.get("FINANCIAL_ANALYSIS_RUNTIME_DIR", "").strip()
+    if configured_root:
+        return Path(configured_root).expanduser()
+    if environment.get("VERCEL"):
+        return Path("/tmp") / "financial_analysis"
+    return PROJECT_ROOT
+
+
+RUNTIME_ROOT = resolve_runtime_root()
+OUTPUT_DIR = RUNTIME_ROOT / "output"
 CLI_OUTPUT_DIR = OUTPUT_DIR / "cli"
-CACHE_DIR = PROJECT_ROOT / ".cache"
+CACHE_DIR = RUNTIME_ROOT / ".cache"
 STOCK_PERIOD_DAYS = {
     "1m": 31,
     "3m": 92,
