@@ -5,6 +5,7 @@ import os
 import tempfile
 import time
 import unittest
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -12,6 +13,33 @@ from src.dart_api import CompanyNotFoundError, DartClient
 
 
 class DartClientCacheTests(unittest.TestCase):
+    def test_bundled_zip_cache_avoids_network_download(self) -> None:
+        companies = [
+            {
+                "corp_code": "00126380",
+                "corp_name": "삼성전자",
+                "stock_code": "005930",
+            }
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bundled_cache = root / "corp_codes.zip"
+            with zipfile.ZipFile(bundled_cache, "w") as archive:
+                archive.writestr(
+                    "corp_codes.json",
+                    json.dumps(companies, ensure_ascii=False),
+                )
+            client = DartClient(
+                "key",
+                root / "runtime-cache",
+                bundled_cache=bundled_cache,
+            )
+
+            with patch.object(client, "_download_corp_codes") as download:
+                self.assertEqual(client.get_corp_codes(), companies)
+
+            download.assert_not_called()
+
     def test_uses_fresh_corp_code_cache(self) -> None:
         companies = [{"corp_code": "001", "corp_name": "테스트전자"}]
         with tempfile.TemporaryDirectory() as directory:

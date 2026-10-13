@@ -93,11 +93,13 @@ class DartClient:
         api_key: str,
         data_dir: Path | None = None,
         cache_ttl_seconds: int = DEFAULT_CORP_CODE_CACHE_TTL,
+        bundled_cache: Path | None = None,
     ) -> None:
         self.api_key = api_key
         self.data_dir = data_dir
         self.corp_code_cache = data_dir / "corp_codes.json" if data_dir else None
         self.cache_ttl_seconds = cache_ttl_seconds
+        self.bundled_cache = bundled_cache
         self._companies_cache: list[dict] | None = None
 
     def _corp_code_cache_is_fresh(self) -> bool:
@@ -201,6 +203,38 @@ class DartClient:
             except (OSError, UnicodeDecodeError, json.JSONDecodeError):
                 # 손상된 캐시는 아래 다운로드 경로에서 자동으로 교체한다.
                 pass
+
+        if not refresh and self.bundled_cache and self.bundled_cache.is_file():
+            try:
+                with zipfile.ZipFile(self.bundled_cache) as archive:
+                    json_names = [
+                        name
+                        for name in archive.namelist()
+                        if name.lower().endswith(".json")
+                    ]
+                    if not json_names:
+                        raise ValueError("압축 파일에 JSON이 없습니다.")
+                    cached = json.loads(archive.read(json_names[0]).decode("utf-8-sig"))
+                if isinstance(cached, list) and cached:
+                    self._companies_cache = cached
+                    LOGGER.info(
+                        "dart_corp_code_bundled_cache_hit path=%s company_count=%d",
+                        self.bundled_cache,
+                        len(cached),
+                    )
+                    return self._companies_cache
+            except (
+                OSError,
+                ValueError,
+                UnicodeDecodeError,
+                json.JSONDecodeError,
+                zipfile.BadZipFile,
+            ):
+                LOGGER.warning(
+                    "dart_corp_code_bundled_cache_invalid path=%s",
+                    self.bundled_cache,
+                    exc_info=True,
+                )
 
         companies = self._download_corp_codes()
         self._companies_cache = companies

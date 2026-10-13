@@ -144,6 +144,7 @@ RUNTIME_ROOT = resolve_runtime_root()
 OUTPUT_DIR = RUNTIME_ROOT / "output"
 CLI_OUTPUT_DIR = OUTPUT_DIR / "cli"
 CACHE_DIR = RUNTIME_ROOT / ".cache"
+BUNDLED_CORP_CODE_CACHE = PROJECT_ROOT / "data" / "corp_codes.zip"
 STOCK_PERIOD_DAYS = {
     "1m": 31,
     "3m": 92,
@@ -576,7 +577,11 @@ def run_analysis(
 
     _notify_progress(progress_callback, "financial", 5, "DART 기업 정보를 확인하고 있습니다.")
     api_key = get_api_key(PROJECT_ROOT)
-    client = DartClient(api_key, data_dir=CACHE_DIR)
+    client = DartClient(
+        api_key,
+        data_dir=CACHE_DIR,
+        bundled_cache=BUNDLED_CORP_CODE_CACHE,
+    )
     raw_records = []
     resolved_companies = []
     resolved_inputs = _resolve_company_inputs(client, companies)
