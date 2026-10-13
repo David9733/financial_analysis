@@ -8,6 +8,7 @@ import os
 import shutil
 import sys
 import time
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
@@ -523,7 +524,7 @@ def _query_years(
         candidate_years = range(date.today().year, 2014, -1)
         required_count = max(number_of_years + 1, 4)
 
-    for year in candidate_years:
+    def fetch_year(year: int) -> tuple[int, tuple[list[dict], str] | None]:
         year_started_at = time.monotonic()
         response = client.get_annual_financials(corp_code, year)
         logger.info(
@@ -533,9 +534,14 @@ def _query_years(
             time.monotonic() - year_started_at,
             response is not None,
         )
+        return year, response
+
+    def collect_response(
+        year: int, response: tuple[list[dict], str] | None
+    ) -> None:
         if response is None:
             logger.info("%s %s년: 사업보고서 재무데이터가 없어 건너뜁니다.", company_name, year)
-            continue
+            return
         rows, fs_div = response
         if not rows:
             logger.info(
@@ -543,11 +549,40 @@ def _query_years(
                 company_name,
                 year,
             )
-            continue
+            return
         collected.append((year, rows, fs_div))
         logger.info("%s %s년 %s 재무데이터 수집 완료", company_name, year, fs_div)
-        if required_count is not None and len(collected) >= required_count:
-            break
+
+    year_iterator = iter(candidate_years)
+    exhausted = False
+    futures: dict[Future, int] = {}
+
+    with ThreadPoolExecutor(max_workers=3, thread_name_prefix="dart-year") as executor:
+        while not exhausted or futures:
+            # 필요한 연도 수를 넘겨 호출하지 않으면서 항상 최대 3개만 동시에 조회한다.
+            while not exhausted and len(futures) < 3:
+                if (
+                    required_count is not None
+                    and len(collected) + len(futures) >= required_count
+                ):
+                    break
+                try:
+                    year = next(year_iterator)
+                except StopIteration:
+                    exhausted = True
+                    break
+                futures[executor.submit(fetch_year, year)] = year
+
+            if not futures:
+                break
+
+            completed, _ = wait(futures, return_when=FIRST_COMPLETED)
+            for future in completed:
+                scheduled_year = futures.pop(future)
+                year, response = future.result()
+                if year != scheduled_year:
+                    raise RuntimeError("DART 연도별 조회 결과의 연도가 일치하지 않습니다.")
+                collect_response(year, response)
 
     return sorted(collected, key=lambda item: item[0])
 

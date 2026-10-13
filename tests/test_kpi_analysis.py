@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+import time
 import unittest
 from unittest.mock import Mock
 
@@ -318,6 +320,30 @@ class KPIAnalysisTests(unittest.TestCase):
 
         self.assertEqual(len(collected), 4)
         self.assertEqual(client.get_annual_financials.call_count, 5)
+
+    def test_year_queries_run_with_at_most_three_workers(self):
+        class ConcurrentClient:
+            def __init__(self):
+                self.active = 0
+                self.maximum_active = 0
+                self.lock = threading.Lock()
+
+            def get_annual_financials(self, corp_code, year):
+                with self.lock:
+                    self.active += 1
+                    self.maximum_active = max(self.maximum_active, self.active)
+                time.sleep(0.03)
+                with self.lock:
+                    self.active -= 1
+                return ([{"account_id": str(year)}], "CFS")
+
+        client = ConcurrentClient()
+
+        collected = _query_years(client, "001", "테스트전자", 2021, 2025, 5)
+
+        # 첫 표시 연도의 성장률 계산에 필요한 직전 연도까지 수집한다.
+        self.assertEqual([year for year, _, _ in collected], list(range(2020, 2026)))
+        self.assertEqual(client.maximum_active, 3)
 
     def test_display_period_does_not_change_financial_trend_or_star_axes(self):
         trend_source = self.financial_frame()
