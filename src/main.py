@@ -51,11 +51,9 @@ if __package__:  # ``python -m src.main`` 또는 패키지 import
         prepare_macro_series,
     )
     from .macro_api import (
-        ExchangeRateClient,
         InterestRateClient,
         MacroAPIError,
         get_ecos_api_key,
-        get_exim_api_key,
     )
     from .stock_analysis import prepare_stock_prices, summarize_stock_prices
     from .stock_api import StockAPIError, StockClient, get_stock_api_key
@@ -102,11 +100,9 @@ else:  # ``python src/main.py``로 직접 실행
         prepare_macro_series,
     )
     from macro_api import (
-        ExchangeRateClient,
         InterestRateClient,
         MacroAPIError,
         get_ecos_api_key,
-        get_exim_api_key,
     )
     from stock_analysis import prepare_stock_prices, summarize_stock_prices
     from stock_api import StockAPIError, StockClient, get_stock_api_key
@@ -377,22 +373,16 @@ def collect_market_macro(
 
     _notify_progress(progress_callback, "macro", 71, "원/달러 환율을 수집하고 있습니다.")
     fx_rows: list = []
+    ecos_client = None
     try:
         fx_started_at = time.monotonic()
-        fx_client = ExchangeRateClient(
-            get_exim_api_key(PROJECT_ROOT), cache_path=CACHE_DIR / "exim_usd_krw.json"
-        )
-        fx_series = fx_client.get_usd_krw(fetch_start, trading_end)
+        ecos_client = InterestRateClient(get_ecos_api_key(PROJECT_ROOT))
+        fx_series = ecos_client.get_usd_krw(fetch_start, trading_end)
         fx_rows = fx_series.rows
-        if fx_series.failed_dates:
-            warnings.append(
-                f"환율: {len(fx_series.failed_dates)}개 날짜 조회에 실패해 직전 값으로 채웠습니다."
-            )
         LOGGER.info(
-            "performance stage=exchange_rate duration_seconds=%.3f row_count=%d failed_dates=%d",
+            "performance stage=exchange_rate duration_seconds=%.3f row_count=%d",
             time.monotonic() - fx_started_at,
             len(fx_rows),
-            len(fx_series.failed_dates),
         )
     except (MacroAPIError, ValueError) as error:
         LOGGER.warning("exchange_rate_primary_failed error=%s", error)
@@ -401,10 +391,11 @@ def collect_market_macro(
     _notify_progress(progress_callback, "macro", 74, "금리를 수집하고 있습니다.")
     rate_rows: list = []
     corporate_bond_rows: list = []
-    rate_client = None
+    rate_client = ecos_client
     try:
         treasury_started_at = time.monotonic()
-        rate_client = InterestRateClient(get_ecos_api_key(PROJECT_ROOT))
+        if rate_client is None:
+            rate_client = InterestRateClient(get_ecos_api_key(PROJECT_ROOT))
         rate_rows = rate_client.get_treasury_3y(fetch_start, trading_end).rows
         LOGGER.info(
             "performance stage=treasury_rate duration_seconds=%.3f row_count=%d",

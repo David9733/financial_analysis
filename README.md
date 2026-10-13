@@ -7,7 +7,7 @@
 ![Matplotlib](https://img.shields.io/badge/Matplotlib-Visualization-11557C?style=flat)
 ![Flask](https://img.shields.io/badge/Flask-Web%20App-000000?style=flat&logo=flask&logoColor=white)
 ![Open DART](https://img.shields.io/badge/Open%20DART-FSS-0B6BCB?style=flat)
-![Tests](https://img.shields.io/badge/Tests-169-2EA44F?style=flat)
+![Tests](https://img.shields.io/badge/Tests-174-2EA44F?style=flat)
 
 기업명을 입력하면 재무제표와 일별 시장 데이터를 수집하고, 업종별 KPI, 5축 기업 스타차트, 주가 흐름, 투자자 거래량, 상관관계와 매크로 레이더를 한 화면에 보여 줍니다. 한 기업을 넣으면 상세 분석, 두 기업 이상을 넣으면 비교 분석으로 표시합니다.
 
@@ -31,12 +31,12 @@ https://github.com/user-attachments/assets/fd538833-aba5-4605-85de-0af79b1dd0b6
 
 ## ✨ 핵심 성과
 
-- **5개 출처 데이터 통합**: Open DART, 공공데이터포털(주가, 지수), 한국수출입은행, 한국은행 ECOS와 투자자 동향 데이터를 거래일 기준 하나의 테이블로 병합
+- **4개 출처 데이터 통합**: Open DART, 공공데이터포털(주가와 지수), 한국은행 ECOS(환율과 금리) 및 투자자 동향 데이터를 거래일 기준 하나의 테이블로 병합
 - **업종별 KPI 설계**: 일반기업, 금융업, 보험업의 계정 구조 차이를 반영해 KPI를 따로 계산하고, 계산할 수 없는 값은 추정하지 않고 사유를 기록
 - **고정 기준 5축 스타 점수**: 성장성, 수익성, 재무 안정성, 효율성과 시장흐름을 최신 KPI와 최근 3개년 추세로 0점에서 100점까지 요약
 - **데이터 품질 관리**: 결측 보간, 소수점 및 단위 오류 보정과 IQR 이상치 표시 내역을 `data_quality_log.csv`로 추적
 - **검증된 LLM 해석**: GPT가 쓴 문장의 근거 KPI, 숫자와 금지 표현을 Python으로 검증하고 실패 시 KPI 기반 대체 인사이트 제공
-- **재현 가능성**: 외부 API를 가짜 응답으로 대체한 테스트 169개, 고정 버전 `requirements.lock`
+- **재현 가능성**: 외부 API를 가짜 응답으로 대체한 테스트 174개, 고정 버전 `requirements.lock`
 
 ## 🔄 분석 파이프라인
 
@@ -45,9 +45,8 @@ flowchart LR
     subgraph 수집
         A1[Open DART<br/>재무제표]
         A2[공공데이터포털<br/>주가, KOSPI, KOSDAQ]
-        A3[한국수출입은행<br/>원/달러 환율]
-        A4[한국은행 ECOS<br/>국고채와 회사채 금리]
-        A5[투자자 동향]
+        A3[한국은행 ECOS<br/>원/달러 환율, 국고채와 회사채 금리]
+        A4[투자자 동향]
     end
     subgraph 정제
         B1[기업별 거래일 기준<br/>left join]
@@ -62,9 +61,9 @@ flowchart LR
         C5[시나리오 분석]
     end
     A1 --> C1 --> C2
-    A2 & A3 & A4 --> B1 --> B2 --> B3 --> C2 & C3 & C4 & C5
+    A2 & A3 --> B1 --> B2 --> B3 --> C2 & C3 & C4 & C5
     C1 & C2 & C3 & C4 & C5 --> D[KPI JSON 스키마]
-    A5 --> E
+    A4 --> E
     D --> G[GPT 해석 + 검증] --> E[Flask 대시보드<br/>CSV와 차트]
 ```
 
@@ -151,7 +150,7 @@ GPT는 데이터를 새로 계산하거나 수집하지 않고, **Python과 Pand
 
 | 문제 | 해결 |
 |---|---|
-| 수출입은행 환율 API는 날짜 1개당 1회 호출이고 일일 한도가 1,000건이라 3년 조회에 약 780건이 필요 | 주말은 호출하지 않고, 확정된 과거 환율은 디스크에 캐시하며, 4개 스레드로 병렬 호출. 인증 및 한도 오류는 즉시 중단 |
+| 장기간 환율을 날짜별로 요청하면 호출 횟수와 대기시간이 커짐 | 한국은행 ECOS 기간 조회로 최대 1,000행씩 수집하고, 1,000행을 넘을 때만 다음 페이지를 요청 |
 | 기업명 오타나 합병 전후의 비슷한 법인명 때문에 다른 기업이 선택될 수 있음 | 정확한 이름과 명확한 부분 일치만 자동 선택하고, 오타는 최대 5개 후보를 안내해 사용자가 정확한 이름을 다시 입력하도록 처리 |
 | 투자자 동향은 공식 API가 없어 응답 형식 변경 시 실패 가능 | 별도 예외로 분리해 실패해도 나머지 분석은 계속 진행하고 경고만 표시 |
 
@@ -176,8 +175,7 @@ GPT는 데이터를 새로 계산하거나 수집하지 않고, **Python과 Pand
 |---|---|---|
 | 재무 | 기업 정보와 연간 재무제표 | [Open DART](https://opendart.fss.or.kr/) |
 | 주가 및 시장 | 일별 OHLC, 거래량, 시가총액, KOSPI와 KOSDAQ 종가 | [공공데이터포털](https://www.data.go.kr/) 금융위원회 |
-| 환율 | 원/달러 매매기준율 | [한국수출입은행](https://www.koreaexim.go.kr/) |
-| 금리 | 국고채 3년과 회사채 3년 AA- | [한국은행 ECOS](https://ecos.bok.or.kr/api/) |
+| 환율 및 금리 | 원/달러 매매기준율, 국고채 3년과 회사채 3년 AA- | [한국은행 ECOS](https://ecos.bok.or.kr/api/) |
 | 투자자 | 최근 거래일의 기관, 개인, 외국인과 기타 매수 및 매도 거래량 | 네이버 모바일 증권 비공식 공개 응답 |
 
 ## 🚀 빠른 시작
@@ -194,8 +192,7 @@ cp .env.example .env        # Windows PowerShell: Copy-Item .env.example .env
 |---|---|---|
 | `DART_KEY` | **필수** | 분석 불가 |
 | `PUBLIC_STOCK_API_KEY` | 선택 | 주가와 시장지수 분석 생략 |
-| `KOREAEXIM_API_KEY` | 선택 | 환율 지표 제외 |
-| `ECOS_API_KEY` | 선택 | 금리와 신용 스프레드 지표 제외 |
+| `ECOS_API_KEY` | 선택 | 환율, 금리와 신용 스프레드 지표 제외 |
 | `OPENAI_API_KEY` | 선택 | KPI 기반 대체 인사이트 표시 |
 | `OPENAI_MODEL` | 선택 | 기본값 `gpt-4o-mini` |
 
@@ -225,7 +222,7 @@ uv run --python 3.10 --isolated --with-requirements requirements.lock src/app.py
 python -m unittest discover -s tests
 ```
 
-테스트 169개는 외부 API를 가짜 응답으로 대체하므로 네트워크와 API 키 없이 실행됩니다.
+테스트 174개는 외부 API를 가짜 응답으로 대체하므로 네트워크와 API 키 없이 실행됩니다.
 
 ## 📤 생성 결과
 
@@ -250,7 +247,7 @@ python -m unittest discover -s tests
 |---|---|---|
 | 수집 | `dart_api.py` | DART 기업 검색, 기업코드 캐시와 재무제표 조회 |
 | | `stock_api.py` | 주가, KOSPI와 KOSDAQ 지수 조회 |
-| | `macro_api.py` | 환율(캐시, 병렬 호출)과 ECOS 금리 조회 |
+| | `macro_api.py` | ECOS 환율과 금리 기간 조회 |
 | | `investor_analysis.py` | 투자자별 거래량 집계 |
 | 정제 | `macro_analysis.py` | 거래일 병합, 변화량, 보간과 이상치 |
 | | `data_quality.py` | 단위 오류 보정과 품질 로그 |

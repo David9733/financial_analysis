@@ -264,14 +264,12 @@ class ResultDashboardViewModelTests(unittest.TestCase):
 
         stock_client.get_market_index_prices.side_effect = index_rows
         empty_series = SimpleNamespace(rows=[], failed_dates=[])
-        with patch("src.main.get_exim_api_key", return_value="key"), patch(
-            "src.main.get_ecos_api_key", return_value="key"
-        ), patch("src.main.ExchangeRateClient") as exchange_client, patch(
+        with patch("src.main.get_ecos_api_key", return_value="key"), patch(
             "src.main.InterestRateClient"
-        ) as rate_client:
-            exchange_client.return_value.get_usd_krw.return_value = empty_series
-            rate_client.return_value.get_treasury_3y.return_value = empty_series
-            rate_client.return_value.get_corporate_aa_minus_3y.return_value = empty_series
+        ) as ecos_client:
+            ecos_client.return_value.get_usd_krw.return_value = empty_series
+            ecos_client.return_value.get_treasury_3y.return_value = empty_series
+            ecos_client.return_value.get_corporate_aa_minus_3y.return_value = empty_series
             merged = collect_market_macro(prices, [], stock_client=stock_client)
 
         requested = {
