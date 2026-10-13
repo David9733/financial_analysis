@@ -337,6 +337,7 @@ def collect_market_macro(
     if stock_client is not None:
         for market in sorted(requested_markets):
             try:
+                market_index_started_at = time.monotonic()
                 index_items = stock_client.get_market_index_prices(
                     market, fetch_start, trading_end
                 )
@@ -364,12 +365,19 @@ def collect_market_macro(
                 )
                 if not parsed_rows:
                     warnings.append(f"{market} 시장지수 데이터가 없습니다.")
+                LOGGER.info(
+                    "performance stage=market_index market=%s duration_seconds=%.3f row_count=%d",
+                    market,
+                    time.monotonic() - market_index_started_at,
+                    len(parsed_rows),
+                )
             except (StockAPIError, ValueError) as error:
                 warnings.append(f"{market} 시장지수를 불러오지 못했습니다. ({error})")
 
     _notify_progress(progress_callback, "macro", 71, "원/달러 환율을 수집하고 있습니다.")
     fx_rows: list = []
     try:
+        fx_started_at = time.monotonic()
         fx_client = ExchangeRateClient(
             get_exim_api_key(PROJECT_ROOT), cache_path=CACHE_DIR / "exim_usd_krw.json"
         )
@@ -379,6 +387,12 @@ def collect_market_macro(
             warnings.append(
                 f"환율: {len(fx_series.failed_dates)}개 날짜 조회에 실패해 직전 값으로 채웠습니다."
             )
+        LOGGER.info(
+            "performance stage=exchange_rate duration_seconds=%.3f row_count=%d failed_dates=%d",
+            time.monotonic() - fx_started_at,
+            len(fx_rows),
+            len(fx_series.failed_dates),
+        )
     except (MacroAPIError, ValueError) as error:
         warnings.append(f"환율 데이터를 불러오지 못했습니다. ({error})")
 
@@ -387,8 +401,14 @@ def collect_market_macro(
     corporate_bond_rows: list = []
     rate_client = None
     try:
+        treasury_started_at = time.monotonic()
         rate_client = InterestRateClient(get_ecos_api_key(PROJECT_ROOT))
         rate_rows = rate_client.get_treasury_3y(fetch_start, trading_end).rows
+        LOGGER.info(
+            "performance stage=treasury_rate duration_seconds=%.3f row_count=%d",
+            time.monotonic() - treasury_started_at,
+            len(rate_rows),
+        )
     except (MacroAPIError, ValueError) as error:
         warnings.append(f"금리 데이터를 불러오지 못했습니다. ({error})")
 
@@ -400,9 +420,15 @@ def collect_market_macro(
     )
     if rate_client is not None:
         try:
+            corporate_bond_started_at = time.monotonic()
             corporate_bond_rows = rate_client.get_corporate_aa_minus_3y(
                 fetch_start, trading_end
             ).rows
+            LOGGER.info(
+                "performance stage=corporate_bond_rate duration_seconds=%.3f row_count=%d",
+                time.monotonic() - corporate_bond_started_at,
+                len(corporate_bond_rows),
+            )
         except (MacroAPIError, ValueError) as error:
             warnings.append(f"회사채 AA- 금리를 불러오지 못했습니다. ({error})")
 
@@ -498,7 +524,15 @@ def _query_years(
         required_count = max(number_of_years + 1, 4)
 
     for year in candidate_years:
+        year_started_at = time.monotonic()
         response = client.get_annual_financials(corp_code, year)
+        logger.info(
+            "performance stage=dart_year company=%s year=%d duration_seconds=%.3f has_data=%s",
+            company_name,
+            year,
+            time.monotonic() - year_started_at,
+            response is not None,
+        )
         if response is None:
             logger.info("%s %s년: 사업보고서 재무데이터가 없어 건너뜁니다.", company_name, year)
             continue
@@ -576,6 +610,7 @@ def run_analysis(
         raise ValueError("START_YEAR는 END_YEAR보다 클 수 없습니다.")
 
     _notify_progress(progress_callback, "financial", 5, "DART 기업 정보를 확인하고 있습니다.")
+    financial_started_at = time.monotonic()
     api_key = get_api_key(PROJECT_ROOT)
     client = DartClient(
         api_key,
@@ -584,7 +619,13 @@ def run_analysis(
     )
     raw_records = []
     resolved_companies = []
+    company_lookup_started_at = time.monotonic()
     resolved_inputs = _resolve_company_inputs(client, companies)
+    LOGGER.info(
+        "performance stage=company_lookup duration_seconds=%.3f company_count=%d",
+        time.monotonic() - company_lookup_started_at,
+        len(companies),
+    )
 
     for index, (input_name, company) in enumerate(resolved_inputs):
         progress = 8 + int(index / max(len(companies), 1) * 32)
@@ -595,6 +636,7 @@ def run_analysis(
             f"{input_name} 재무제표를 수집하고 있습니다.",
         )
         company_name = company["corp_name"]
+        dart_started_at = time.monotonic()
         yearly_data = _query_years(
             client,
             company["corp_code"],
@@ -602,6 +644,12 @@ def run_analysis(
             start_year,
             end_year,
             number_of_years,
+        )
+        LOGGER.info(
+            "performance stage=dart_financial company=%s duration_seconds=%.3f collected_years=%d",
+            company_name,
+            time.monotonic() - dart_started_at,
+            len(yearly_data),
         )
         if not yearly_data:
             logging.warning("%s: 분석 가능한 사업보고서가 없습니다.", company_name)
@@ -656,8 +704,17 @@ def run_analysis(
     result_path = target_output_dir / "financial_analysis.csv"
     # utf-8-sig는 Excel에서도 한글 CSV가 깨지지 않도록 BOM을 포함한다.
     format_result_for_csv(result).to_csv(result_path, index=False, encoding="utf-8-sig")
+    financial_chart_started_at = time.monotonic()
     create_visualizations(result, target_output_dir / "charts", show_charts=show_charts)
+    LOGGER.info(
+        "performance stage=financial_charts duration_seconds=%.3f",
+        time.monotonic() - financial_chart_started_at,
+    )
     _notify_progress(progress_callback, "financial", 42, "재무지표와 차트를 생성했습니다.")
+    LOGGER.info(
+        "performance stage=financial_total duration_seconds=%.3f",
+        time.monotonic() - financial_started_at,
+    )
 
     print(f"분석 CSV: {result_path}")
     print(f"차트 폴더: {target_output_dir / 'charts'}")
@@ -732,8 +789,15 @@ def run_integrated_analysis(
             warnings.append(f"{company_name}: 상장 종목코드가 없어 재무분석만 제공합니다.")
             continue
         try:
+            stock_started_at = time.monotonic()
             rows = stock_client.get_stock_prices(
                 stock_code, start_date=collection_start, end_date=period_end
+            )
+            LOGGER.info(
+                "performance stage=stock_prices company=%s duration_seconds=%.3f row_count=%d",
+                company_name,
+                time.monotonic() - stock_started_at,
+                len(rows),
             )
         except (StockAPIError, ValueError) as error:
             warnings.append(f"{company_name}: 주식시세 API 조회 실패 ({error})")
@@ -759,8 +823,15 @@ def run_integrated_analysis(
         actual_start = frame["기준일"].min().date()
         actual_end = frame["기준일"].max().date()
         try:
+            investor_started_at = time.monotonic()
             investor_frame = get_investor_trading(
                 company_name, stock_code, actual_start, actual_end
+            )
+            LOGGER.info(
+                "performance stage=investor company=%s duration_seconds=%.3f row_count=%d",
+                company_name,
+                time.monotonic() - investor_started_at,
+                len(investor_frame),
             )
         except InvestorDataError as error:
             warnings.append(f"{company_name}: 투자자별 수급 조회 실패 ({error})")
@@ -791,10 +862,15 @@ def run_integrated_analysis(
                 index=False,
                 encoding="utf-8-sig",
             )
+        stock_chart_started_at = time.monotonic()
         create_stock_visualizations(
             stock_prices,
             target_output_dir / "stock_charts",
             investor_summary=investor_summary,
+        )
+        LOGGER.info(
+            "performance stage=stock_charts duration_seconds=%.3f",
+            time.monotonic() - stock_chart_started_at,
         )
     else:
         stock_prices = prepare_stock_prices([], "", "")
@@ -802,6 +878,7 @@ def run_integrated_analysis(
         stock_summary = summarize_stock_prices(stock_prices)
         investor_summary = empty_investor_summary()
 
+    macro_started_at = time.monotonic()
     market_macro = collect_market_macro(
         stock_prices,
         warnings,
@@ -809,10 +886,16 @@ def run_integrated_analysis(
         log=quality_log,
         stock_client=stock_client,
     )
+    LOGGER.info(
+        "performance stage=market_macro_total duration_seconds=%.3f row_count=%d",
+        time.monotonic() - macro_started_at,
+        len(market_macro),
+    )
     if not market_macro.empty:
         market_macro.to_csv(
             target_output_dir / "market_macro.csv", index=False, encoding="utf-8-sig"
         )
+        macro_chart_started_at = time.monotonic()
         create_macro_visualizations(market_macro, target_output_dir / "stock_charts")
         create_daily_change_visualizations(
             market_macro, target_output_dir / "stock_charts"
@@ -826,6 +909,10 @@ def run_integrated_analysis(
         create_rolling_correlation_visualizations(
             market_macro, target_output_dir / "stock_charts", stock_period
         )
+        LOGGER.info(
+            "performance stage=macro_charts duration_seconds=%.3f",
+            time.monotonic() - macro_chart_started_at,
+        )
 
     quality_frame = quality_log.to_frame()
     if not quality_frame.empty:
@@ -837,6 +924,7 @@ def run_integrated_analysis(
         "data_quality records=%d %s", len(quality_frame), quality_log.summary_text()
     )
 
+    kpi_started_at = time.monotonic()
     kpi_payload = build_kpi_payload(
         financial,
         stock_prices,
@@ -844,6 +932,10 @@ def run_integrated_analysis(
         market_macro=market_macro,
         volume_history=volume_history,
         financial_trend_source=trend_financial,
+    )
+    LOGGER.info(
+        "performance stage=kpi duration_seconds=%.3f",
+        time.monotonic() - kpi_started_at,
     )
     (target_output_dir / "kpi_analysis.json").write_text(
         json.dumps(kpi_payload, ensure_ascii=False, indent=2), encoding="utf-8"

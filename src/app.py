@@ -953,6 +953,7 @@ def start_async_gpt_analysis(
 
 def run_gpt_analysis_with_timeout(payload: dict) -> tuple[list[dict], list[dict], str]:
     """서버리스 요청 안에서 GPT를 최대 10초 기다리고 항상 분석 카드를 반환한다."""
+    gpt_started_at = time.monotonic()
     result_queue: queue.Queue = queue.Queue(maxsize=1)
 
     def request_gpt() -> None:
@@ -992,6 +993,12 @@ def run_gpt_analysis_with_timeout(payload: dict) -> tuple[list[dict], list[dict]
         result.get("analyses", []),
         result.get("comparisons", []),
         payload,
+    )
+    LOGGER.info(
+        "performance stage=gpt duration_seconds=%.3f company_count=%d fallback=%s",
+        time.monotonic() - gpt_started_at,
+        len(payload.get("companies", [])),
+        bool(notice),
     )
     return insight_cards, comparison_cards, notice
 
@@ -1303,6 +1310,7 @@ def analyze():
         [format_table_value(column, row[column]) for column in visible_columns]
         for _, row in display.iterrows()
     ]
+    chart_delivery_started_at = time.monotonic()
     charts_dir = run_dir / "charts"
     chart_paths = sorted(charts_dir.glob("*.png"))
     stock_charts_dir = run_dir / "stock_charts"
@@ -1343,6 +1351,14 @@ def analyze():
         for group in stock_chart_groups
         if group["key"] in {"macro", "correlation"}
     ]
+    LOGGER.info(
+        "performance stage=chart_delivery run_id=%s duration_seconds=%.3f chart_count=%d source_bytes=%d compressed=%s",
+        run_id,
+        time.monotonic() - chart_delivery_started_at,
+        len(chart_paths) + len(stock_chart_paths),
+        chart_bytes,
+        compress_inline_charts,
+    )
     stock_columns = list(integrated.stock_summary.columns)
     stock_rows = [
         [format_stock_value(column, row[column]) for column in stock_columns]
@@ -1468,7 +1484,8 @@ def analyze():
         len(integrated.warnings),
         time.monotonic() - started_at,
     )
-    return render_template(
+    render_started_at = time.monotonic()
+    rendered = render_template(
         "result_dashboard.html",
         companies=companies,
         analysis_mode=analysis_mode,
@@ -1523,6 +1540,13 @@ def analyze():
         data_quality_csv_url=data_quality_csv_url,
         data_previews=data_previews,
     )
+    LOGGER.info(
+        "performance stage=result_render run_id=%s duration_seconds=%.3f response_bytes=%d",
+        run_id,
+        time.monotonic() - render_started_at,
+        len(rendered.encode("utf-8")),
+    )
+    return rendered
 
 
 @app.get("/analysis-progress/<run_id>")
