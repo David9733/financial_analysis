@@ -616,6 +616,8 @@ class AppStockIntegrationTests(unittest.TestCase):
         self.assertIn("submitStatus.scrollIntoView", html)
         self.assertIn("minimumLoadingTime", html)
         self.assertIn("Promise.all([analysisRequest, minimumLoadingTime])", html)
+        self.assertIn("response.status !== 400", html)
+        self.assertIn("분석 요청이 중단되었습니다.", html)
 
     @patch("src.app.run_integrated_analysis")
     def test_six_month_stock_period_is_available(self, run_analysis):

@@ -216,6 +216,9 @@
         const [response] = await Promise.all([analysisRequest, minimumLoadingTime]);
         const html = await response.text();
         window.clearInterval(timer);
+        if (!response.ok && response.status !== 400) {
+          throw new Error(`analysis request failed: ${response.status}`);
+        }
         if (response.ok) {
           renderProgress({stage: 'gpt', percent: 78, message: 'GPT 자동 인사이트를 백그라운드에서 생성하고 있습니다.'});
           await new Promise((resolve) => window.setTimeout(resolve, 500));
@@ -230,7 +233,7 @@
         setAnalysisLocked(false);
         submitStatus.hidden = true;
         button.innerHTML = '분석 다시 시도 <span>→</span>';
-        renderProgress({stage: 'failed', percent: 100, message: '서버에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.'});
+        renderProgress({stage: 'failed', percent: 100, message: '분석 요청이 중단되었습니다. 잠시 후 다시 시도해 주세요.'});
       }
     });
 
