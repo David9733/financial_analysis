@@ -1,5 +1,5 @@
 # 📈 FINANCIAL LAB
-<img width="1200" height="630" alt="가로형 로고@1x" src="https://github.com/user-attachments/assets/72c0acb0-573c-44d5-b560-614dc4f1aad8" />
+<img width="1344" height="483"  alt="가로형 로고@1x" src="https://github.com/user-attachments/assets/72c0acb0-573c-44d5-b560-614dc4f1aad8" />
 
 
 > 기업의 재무 성과와 주가가 시장지수, 환율, 금리 및 신용 스프레드와 어떻게 움직였는지 일별 데이터로 분석합니다.
