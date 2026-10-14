@@ -405,11 +405,17 @@ def _market_kpis(
         volume_status = "no_comparison_period"
         volume_reason = "최근 20일과 직전 20일을 비교할 거래일이 부족함"
 
-    technical = add_bollinger_bands(add_moving_averages(prices, windows=(20,)))
+    # 1개월 조회는 20거래일에 못 미칠 수 있어 계산에만 이전 시세를 함께 사용한다.
+    technical = add_bollinger_bands(add_moving_averages(volume_prices, windows=(20,)))
     last = technical.iloc[-1]
     price_to_ma20 = _safe_ratio(last["종가"] - last["이동평균20일"], last["이동평균20일"])
     band_width = last["BB상한"] - last["BB하한"]
     bollinger_position = _safe_ratio(last["종가"] - last["BB하한"], band_width)
+    technical_status = None
+    technical_reason = None
+    if pd.isna(last["이동평균20일"]):
+        technical_status = "no_comparison_period"
+        technical_reason = "20일 이동평균 계산에 필요한 거래일(20일)이 부족함"
 
     period_high = prices["고가"].max() if "고가" in prices else None
     period_low = prices["저가"].min() if "저가" in prices else None
@@ -439,8 +445,18 @@ def _market_kpis(
             status=volume_status,
             reason=volume_reason,
         ),
-        "price_to_ma20": _metric(price_to_ma20, "%"),
-        "bollinger_position": _metric(bollinger_position, "%"),
+        "price_to_ma20": _metric(
+            price_to_ma20,
+            "%",
+            status=technical_status,
+            reason=technical_reason,
+        ),
+        "bollinger_position": _metric(
+            bollinger_position,
+            "%",
+            status=technical_status,
+            reason=technical_reason,
+        ),
     }
 
 

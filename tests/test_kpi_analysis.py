@@ -394,7 +394,7 @@ class KPIAnalysisTests(unittest.TestCase):
 
         self.assertEqual(trend["status"], "no_comparison_period")
 
-    def test_volume_history_only_changes_recent_volume_kpi(self):
+    def test_volume_history_supplies_lookback_kpis(self):
         history = self.stock_frame().copy()
         selected = history.tail(20).copy()
 
@@ -407,11 +407,43 @@ class KPIAnalysisTests(unittest.TestCase):
         market = payload["companies"][0]["market_kpi"]
 
         self.assertEqual(market["recent_volume_change"]["status"], "available")
+        self.assertEqual(market["price_to_ma20"]["status"], "available")
+        self.assertEqual(market["bollinger_position"]["status"], "available")
         self.assertEqual(
             market["start_date"]["value"],
             selected["기준일"].min().date().isoformat(),
         )
         self.assertEqual(market["average_volume"]["value"], round(selected["거래량"].mean()))
+
+    def test_short_selection_uses_history_for_moving_average_kpis(self):
+        history = self.stock_frame().copy()
+        selected = history.tail(15).copy()
+
+        payload = build_kpi_payload(
+            self.financial_frame(),
+            selected,
+            "1m",
+            volume_history=history,
+        )
+        market = payload["companies"][0]["market_kpi"]
+
+        moving_average = history["종가"].tail(20).mean()
+        expected = round(
+            (history["종가"].iloc[-1] - moving_average) / moving_average * 100, 2
+        )
+        self.assertEqual(market["price_to_ma20"]["status"], "available")
+        self.assertEqual(market["price_to_ma20"]["value"], expected)
+        self.assertEqual(market["bollinger_position"]["status"], "available")
+
+    def test_short_selection_without_history_marks_moving_average_kpis(self):
+        selected = self.stock_frame().tail(15).copy()
+
+        payload = build_kpi_payload(self.financial_frame(), selected, "1m")
+        market = payload["companies"][0]["market_kpi"]
+
+        for key in ("price_to_ma20", "bollinger_position"):
+            self.assertEqual(market[key]["status"], "no_comparison_period")
+            self.assertIsNone(market[key]["value"])
 
     def test_missing_stock_data_is_explicit(self):
         payload = build_kpi_payload(

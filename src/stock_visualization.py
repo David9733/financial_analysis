@@ -189,9 +189,25 @@ def _create_monthly_volume_chart(data: pd.DataFrame, company: str, output_path: 
     plt.close(fig)
 
 
-def _create_price_chart(data: pd.DataFrame, company: str, output_path: Path) -> None:
-    data = add_moving_averages(data)
-    data = add_bollinger_bands(data)
+def _price_indicator_frame(
+    data: pd.DataFrame, history: pd.DataFrame | None = None
+) -> pd.DataFrame:
+    """이동평균과 볼린저 밴드를 계산하고 선택 기간 행만 남긴다.
+
+    1개월 조회는 20거래일에 못 미칠 수 있어 이전 시세가 있으면 계산에만 사용한다.
+    """
+    source = history if history is not None and not history.empty else data
+    indicators = add_bollinger_bands(add_moving_averages(source))
+    return indicators[indicators["기준일"].isin(data["기준일"])].reset_index(drop=True)
+
+
+def _create_price_chart(
+    data: pd.DataFrame,
+    company: str,
+    output_path: Path,
+    history: pd.DataFrame | None = None,
+) -> None:
+    data = _price_indicator_frame(data, history)
     fig, ax = plt.subplots(figsize=(10, 5))
     ax.plot(
         data["기준일"],
@@ -878,6 +894,7 @@ def create_stock_visualizations(
     prices: pd.DataFrame,
     charts_dir: Path,
     investor_summary: pd.DataFrame | None = None,
+    indicator_history: pd.DataFrame | None = None,
 ) -> None:
     """기업 수에 맞는 주식시장 차트를 생성한다."""
     if prices.empty:
@@ -885,11 +902,18 @@ def create_stock_visualizations(
     charts_dir.mkdir(parents=True, exist_ok=True)
     configure_korean_font()
 
+    def company_history(company: str) -> pd.DataFrame | None:
+        if indicator_history is None or indicator_history.empty:
+            return None
+        return indicator_history[indicator_history["기업명"] == company]
+
     if prices["기업명"].nunique() == 1:
         data = prices.sort_values("기준일")
         company = data["기업명"].iloc[0]
 
-        _create_price_chart(data, company, charts_dir / "stock_price.png")
+        _create_price_chart(
+            data, company, charts_dir / "stock_price.png", company_history(company)
+        )
 
         _create_volume_chart(data, company, charts_dir / "stock_volume.png")
         _create_monthly_volume_chart(data, company, charts_dir / "stock_volume_monthly.png")
@@ -932,7 +956,12 @@ def create_stock_visualizations(
     for company, data in prices.groupby("기업명", sort=False):
         code = str(data["종목코드"].iloc[0])
         data = data.sort_values("기준일")
-        _create_price_chart(data, company, charts_dir / f"stock_price_{code}.png")
+        _create_price_chart(
+            data,
+            company,
+            charts_dir / f"stock_price_{code}.png",
+            company_history(company),
+        )
         _create_volume_chart(data, company, charts_dir / f"stock_volume_{code}.png")
         _create_monthly_volume_chart(
             data, company, charts_dir / f"stock_volume_monthly_{code}.png"

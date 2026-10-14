@@ -894,6 +894,7 @@ def run_integrated_analysis(
             stock_prices,
             target_output_dir / "stock_charts",
             investor_summary=investor_summary,
+            indicator_history=volume_history,
         )
         LOGGER.info(
             "performance stage=stock_charts duration_seconds=%.3f",

@@ -22,6 +22,7 @@ from src.stock_visualization import (
     _build_market_correlation_heatmap_figure,
     _create_monthly_volume_chart,
     _outlier_status_text,
+    _price_indicator_frame,
     create_rolling_correlation_visualizations,
     create_daily_change_visualizations,
     create_fx_rate_scatter_visualizations,
@@ -222,6 +223,30 @@ class MonthlyVolumeTests(unittest.TestCase):
 
             self.assertTrue(long_path.exists())
             self.assertFalse(short_path.exists())
+
+
+class PriceIndicatorFrameTests(unittest.TestCase):
+    @staticmethod
+    def price_frame(days: int) -> pd.DataFrame:
+        dates = pd.date_range("2026-01-01", periods=days, freq="B")
+        return pd.DataFrame(
+            {"기준일": dates, "종가": [100 + index for index in range(days)]}
+        )
+
+    def test_short_selection_uses_history_for_indicator_lines(self) -> None:
+        history = self.price_frame(45)
+        selected = history.tail(15).reset_index(drop=True)
+
+        indicators = _price_indicator_frame(selected, history)
+
+        self.assertEqual(indicators["기준일"].tolist(), selected["기준일"].tolist())
+        self.assertFalse(indicators["이동평균20일"].isna().any())
+        self.assertFalse(indicators["BB상한"].isna().any())
+
+    def test_short_selection_without_history_keeps_missing_indicators(self) -> None:
+        indicators = _price_indicator_frame(self.price_frame(15))
+
+        self.assertTrue(indicators["이동평균20일"].isna().all())
 
 
 class DailyChangeVisualizationTests(unittest.TestCase):
