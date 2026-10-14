@@ -1,36 +1,73 @@
-# 📈 FINANCIAL LAB
 <img width="1344" height="483" alt="이미지2" src="https://github.com/user-attachments/assets/f1dc00fe-b880-45f7-9ea8-8660ad45b847" />
 
-[![배포 사이트 바로가기](https://img.shields.io/badge/LIVE%20SITE-OPEN-000000?style=for-the-badge&logo=vercel&logoColor=white)](https://financial-analysis-2026.vercel.app/)
+# 📈 FINANCIAL LAB
 
-> 기업의 재무 성과와 주가가 시장지수, 환율, 금리 및 신용 스프레드와 어떻게 움직였는지 일별 데이터로 분석합니다.
+기업명만 입력하면 재무제표, 주가, 환율과 금리를 거래일 기준으로 묶어 분석하는 기업 재무·매크로 분석 서비스
 
-![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=flat&logo=python&logoColor=white)
-![Pandas](https://img.shields.io/badge/Pandas-Analysis-150458?style=flat&logo=pandas&logoColor=white)
-![Matplotlib](https://img.shields.io/badge/Matplotlib-Visualization-11557C?style=flat)
-![Flask](https://img.shields.io/badge/Flask-Web%20App-000000?style=flat&logo=flask&logoColor=white)
-![Open DART](https://img.shields.io/badge/Open%20DART-FSS-0B6BCB?style=flat)
-![Tests](https://img.shields.io/badge/Tests-178-2EA44F?style=flat)
+**목차**: [개요](#-프로젝트-개요) | [목적](#-프로젝트-목적) | [기술 스택](#️-기술-스택-및-선택-이유) | [핵심 성과](#-핵심-성과) | [파이프라인](#-분석-파이프라인) | [분석 설계](#-분석-설계와-의사결정) | [데이터 품질](#-데이터-품질-관리) | [LLM 활용](#-llm-활용-방식) | [트러블슈팅](#️-트러블슈팅) | [빠른 시작](#-빠른-시작) | [사용 방법](#-사용-방법) | [한계](#️-한계와-향후-개선)
 
-기업명을 입력하면 재무제표와 일별 시장 데이터를 수집하고, 업종별 KPI, 5축 기업 스타차트, 주가 흐름, 투자자 거래량, 상관관계와 매크로 레이더를 한 화면에 보여 줍니다. 한 기업을 넣으면 상세 분석, 두 기업 이상을 넣으면 비교 분석으로 표시합니다.
+---
 
-**목차**: [배경](#-프로젝트-배경) | [핵심 성과](#-핵심-성과) | [파이프라인](#-분석-파이프라인) | [분석 설계](#-분석-설계와-의사결정) | [데이터 품질](#-데이터-품질-관리) | [LLM 활용](#-llm-활용-방식) | [트러블슈팅](#️-트러블슈팅) | [빠른 시작](#-빠른-시작) | [사용 방법](#-사용-방법) | [한계](#️-한계와-향후-개선)
+## 📋 프로젝트 개요
 
-## 🎬 시연
+| 항목 | 내용 |
+|------|------|
+| **개발 기간** | 2026.10 |
+| **프로젝트 유형** | 개인 프로젝트 |
+| **핵심 기술** | Python, Pandas, Matplotlib, Flask, Pydantic, OpenAI API |
+| **데이터 출처** | Open DART, 공공데이터포털(금융위원회), 한국은행 ECOS, 투자자 동향 |
+| **배포 링크** | [바로가기](https://financial-analysis-2026.vercel.app/) |
 
-https://github.com/user-attachments/assets/fd538833-aba5-4605-85de-0af79b1dd0b6
+---
 
-## 🎯 프로젝트 배경
+## 🎯 프로젝트 목적
 
-재무제표로는 기업이 얼마나 벌었는지 알 수 있습니다. 하지만 **환율이 오르거나 금리가 뛸 때 이 기업 주가가 시장보다 더 흔들리는지**는 알 수 없습니다. 이를 확인하려면 DART, 주가, 환율과 금리 데이터를 각각 내려받아 날짜를 맞춰야 하고, 그 과정에서 휴장일, 결측과 단위 오류를 직접 처리해야 합니다.
+"재무제표 밖의 움직임까지, 한 화면에서 본다."
 
-이 프로젝트는 그 과정을 자동화해 다음 세 질문에 답합니다.
+재무제표로는 기업이 얼마나 벌었는지 알 수 있지만, 환율이 오르거나 금리가 뛸 때 이 기업 주가가 시장보다 더 흔들렸는지는 알 수 없습니다.<br>
+이를 확인하려면 DART, 주가, 환율과 금리 데이터를 각각 내려받아 날짜를 맞추고 휴장일, 결측과 단위 오류를 직접 처리해야 합니다.<br>
+이 프로젝트는 4개 출처의 데이터를 거래일 기준으로 통합하고 업종별 KPI, 상관관계와 시나리오 분석까지 자동화합니다.
+
+| 구분 | 내용 |
+|------|------|
+| **기존 방식** | DART 재무제표, 주가, 환율과 금리를 사이트별로 내려받아 날짜를 맞추고 결측과 단위 오류를 직접 정리 |
+| **본 서비스** | 기업명과 조회기간만 입력하면 데이터를 거래일 기준으로 병합하고 업종별 KPI, 매크로 레이더와 시나리오 분석을 자동 계산 |
+| **효과** | 반복적인 수집과 정제 없이 재무 성과와 외부 요인 반응을 한 화면에서 비교하고, 모든 처리 내역은 품질 로그로 추적 |
+
+이 프로젝트는 다음 세 질문에 답합니다.
 
 | 분석 질문 | 사용한 분석 |
 |---|---|
 | 평소 이 기업 주가는 환율, 금리, 신용 스프레드와 같은 방향으로 움직였는가? | 일별 변화량 Pearson 상관관계 |
 | 그 움직임은 시장 전체 효과인가, 이 기업만의 특성인가? | 시장 상관을 뺀 **매크로 레이더**와 이동상관 안정성 |
 | 금리 상승과 원화 약세가 함께 온 날, 기업은 시장보다 버텼는가? | 조건부 **시나리오 분석** |
+
+## 🎬 시연
+
+https://github.com/user-attachments/assets/fd538833-aba5-4605-85de-0af79b1dd0b6
+
+## 🛠️ 기술 스택 및 선택 이유
+
+| 기술 | 버전 | 선택 이유 |
+|------|------|-----------|
+| **Python** | 3.10+ | API 수집, 분석과 웹 서버를 한 언어로 구성<br>표준 `urllib`로 4개 공공 API를 호출해 별도 HTTP 의존성 없이 운영 |
+| **Pandas** | 2.3.3 | `merge_asof`로 거래일 기준 병합 시 직전 관측값만 사용해 미래 값 혼입 방지<br>`groupby`와 `shift`로 기업별 연속 연도 성장률과 평균자본 계산, `rolling().corr()`로 이동상관 계산 |
+| **NumPy** | 2.2.6 | `np.select`로 기업별 업종(일반, 금융, 보험)을 벡터 연산으로 판별<br>`np.polyfit`으로 환율 변화율과 금리 변화폭 산점도의 추세선 기울기 계산 |
+| **Matplotlib** | 3.10.9 | 서버에서 Agg 백엔드로 PNG 차트를 생성해 CSV와 함께 파일로 제공<br>koreanize-matplotlib 0.1.1로 배포 환경의 한글 폰트 깨짐 방지 |
+| **Flask** | 3.1.3 | 분석 파이프라인을 그대로 호출하는 가벼운 웹 서버<br>진행률 조회와 백그라운드 GPT 분석 상태 조회 엔드포인트 구성 |
+| **Pydantic** | 2.13.5 | GPT 응답 스키마를 정의해 섹션별 문장과 근거 KPI 키를 구조화 출력으로 강제<br>스키마를 벗어난 응답은 파싱 단계에서 차단 |
+| **OpenAI API** | 2.54.0 | Responses API로 Python이 계산한 KPI JSON만 해석<br>`store=False`로 응답 저장 비활성화, 실패 시 KPI 기반 대체 인사이트로 전환 |
+| **Pillow** | 12.3.0 | 서버리스 환경에서 차트를 WebP로 압축해 HTML에 직접 삽입<br>임시 파일이 사라져도 결과 화면의 차트 유지 |
+| **Vercel** | - | Git 연동으로 배포 자동화<br>`maxDuration` 300초 설정으로 다중 기업 분석처럼 오래 걸리는 요청 처리 |
+
+![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![Pandas](https://img.shields.io/badge/Pandas-150458?style=for-the-badge&logo=pandas&logoColor=white)
+![NumPy](https://img.shields.io/badge/NumPy-013243?style=for-the-badge&logo=numpy&logoColor=white)
+![Matplotlib](https://img.shields.io/badge/Matplotlib-11557C?style=for-the-badge)
+![Flask](https://img.shields.io/badge/Flask-000000?style=for-the-badge&logo=flask&logoColor=white)
+![Pydantic](https://img.shields.io/badge/Pydantic-E92063?style=for-the-badge&logo=pydantic&logoColor=white)
+![OpenAI](https://img.shields.io/badge/OpenAI_API-412991?style=for-the-badge&logo=openai&logoColor=white)
+![Vercel](https://img.shields.io/badge/Vercel-000000?style=for-the-badge&logo=vercel&logoColor=white)
 
 ## ✨ 핵심 성과
 
@@ -319,9 +356,7 @@ CLI의 기본 주가 조회기간은 1년이며 결과는 `output/cli/`에 저�
 - 상관 차이 대신 다중 회귀 기반 베타로 외부 요인 민감도 추정
 - 사용자 인증, 요청 제한과 운영용 WSGI 서버를 갖춘 공개 배포
 
-## 📚 문서와 기술 스택
+## 📚 문서
 
 - [분석 방법론](docs/analysis-methodology.md): 지표 계산식, 결측 처리, 이상치와 상관분석 기준
 - [기술 및 운영 가이드](docs/technical-guide.md): API별 처리, CLI 사용법, 출력 구조와 보안
-
-`Python`, `Pandas`, `Matplotlib`, `koreanize-matplotlib`, `Flask`, `Pydantic`, `OpenAI API`
