@@ -30,6 +30,15 @@ class AppStockIntegrationTests(unittest.TestCase):
         app.config.update(TESTING=True)
         self.client = app.test_client()
 
+    def test_search_page_uses_compact_intro_copy(self):
+        response = self.client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            "기업명만 입력하면 재무와 주식시장 데이터를 한 번에 분석합니다.",
+            response.get_data(as_text=True),
+        )
+
     def test_neutral_direction_kpi_has_distinct_display_label(self):
         self.assertEqual(
             format_kpi_metric(
@@ -205,6 +214,23 @@ class AppStockIntegrationTests(unittest.TestCase):
         self.assertIn("kpi-help-item", response.get_data(as_text=True))
         self.assertNotIn("외부 요인 (환율, 금리)", response.get_data(as_text=True))
         run_analysis.assert_called_once()
+
+    @patch("src.app.ENABLE_GPT_INSIGHTS", False)
+    @patch("src.app.run_integrated_analysis")
+    def test_data_quality_warning_uses_collapsible_notice(self, run_analysis):
+        result = self.fake_result()
+        result.warnings = ["데이터 처리: 직전 값 채움 3건, 하루 변화 이상치 표시 1건"]
+        run_analysis.return_value = result
+
+        response = self.client.post(
+            "/analyze",
+            data={"company": "삼성전자", "number_of_years": "5", "stock_period": "1y"},
+        )
+        html = response.get_data(as_text=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('<details class="data-quality-notice">', html)
+        self.assertIn("<summary>데이터 처리 내역</summary>", html)
 
     @patch("src.app.ENABLE_GPT_INSIGHTS", True)
     @patch("src.app.run_integrated_analysis")

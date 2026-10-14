@@ -30,7 +30,7 @@
         <div class="comparison-table-wrap{% if matrix.companies|length == 2 %} is-compact{% endif %}">
           <table class="comparison-table">
             <thead><tr><th>지표</th>{% for company in matrix.companies %}<th>{{ company }}</th>{% endfor %}</tr></thead>
-            <tbody>{% for row in matrix.rows %}<tr><th class="{% if row.help_text %}kpi-help-item{% if row.help_kind == 'warning' %} kpi-warning-item{% endif %}{% endif %}"{% if row.help_text %} tabindex="0" aria-label="{{ row.label }}. {{ row.help_text }}"{% endif %}>{{ render_kpi_label(row) }}</th>{% for value in row['values'] %}<td>{{ render_matrix_value(row, loop.index0) }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+            <tbody>{% for row in matrix.rows %}<tr><th class="{% if row.help_text %}kpi-help-item{% if row.help_kind == 'warning' %} kpi-warning-item{% endif %}{% endif %}"{% if row.help_text %} tabindex="0" aria-label="{{ row.label }}. {{ row.help_text }}"{% endif %}>{{ render_kpi_label(row) }}</th>{% for value in row['values'] %}<td data-company="{{ matrix.companies[loop.index0] }}">{{ render_matrix_value(row, loop.index0) }}</td>{% endfor %}</tr>{% endfor %}</tbody>
           </table>
         </div>
       {% endif %}
@@ -91,7 +91,7 @@
       <a class="button" href="{{ url_for('index') }}">새 분석</a>
     </header>
 
-    {% if warnings %}<section class="warning-list" aria-label="데이터 조회 안내">{% for warning in warnings %}<p>{{ warning }}</p>{% endfor %}</section>{% endif %}
+    {% if warnings %}<section class="warning-list" aria-label="데이터 조회 안내">{% for warning in warnings %}{% if warning.startswith('데이터 처리:') %}<details class="data-quality-notice"><summary>데이터 처리 내역</summary><p>{{ warning }}</p></details>{% else %}<p>{{ warning }}</p>{% endif %}{% endfor %}</section>{% endif %}
 
     <section class="overview-section" aria-labelledby="market-overview-title">
       <div class="section-heading compact-heading"><div><p class="eyebrow">MARKET SNAPSHOT</p><h2 id="market-overview-title">시장 환경</h2></div><span>휴장일에는 가장 최근 거래일 기준입니다.</span></div>
@@ -194,7 +194,7 @@
       {% for preview in data_previews %}
         <section id="preview-panel-{{ preview.key }}" class="panel table-panel data-preview-panel" role="tabpanel" aria-labelledby="preview-tab-{{ preview.key }}" data-preview-panel="{{ preview.key }}"{% if not loop.first %} hidden{% endif %}>
           <div class="preview-panel-heading"><div><h3>{{ preview.label }}</h3><span>CSV 기준 상위 5행과 모든 열을 표시합니다.</span></div>{% if preview.download_url %}<a class="button secondary preview-download" href="{{ preview.download_url }}" download>CSV 다운로드</a>{% endif %}</div>
-          {% if preview.columns and preview.rows %}<div class="table-wrap"><table><thead><tr>{% for column in preview.columns %}<th>{{ column }}</th>{% endfor %}</tr></thead><tbody>{% for row in preview.rows %}<tr>{% for value in row %}<td>{{ value }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>{% else %}<div class="empty-state compact-empty">표시할 데이터가 없습니다.</div>{% endif %}
+          {% if preview.columns and preview.rows %}<div class="table-wrap"><table class="detail-data-table"><thead><tr>{% for column in preview.columns %}<th>{{ column }}</th>{% endfor %}</tr></thead><tbody>{% for row in preview.rows %}<tr>{% for value in row %}<td data-column="{{ preview.columns[loop.index0] }}">{{ value }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>{% else %}<div class="empty-state compact-empty">표시할 데이터가 없습니다.</div>{% endif %}
         </section>
       {% endfor %}
     </section>
@@ -399,6 +399,19 @@
       owner.addEventListener('focusin', () => showHelp(owner));
       owner.addEventListener('focusout', () => hideHelp(owner));
       owner.addEventListener('click', () => owner.focus());
+    });
+    document.addEventListener('pointerdown', (event) => {
+      if (!activeHelp) return;
+      const { owner, tooltip } = activeHelp;
+      if (owner.contains(event.target) || tooltip.contains(event.target)) return;
+      if (owner.contains(document.activeElement)) document.activeElement.blur();
+      hideHelp(null, true);
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape' || !activeHelp) return;
+      const owner = activeHelp.owner;
+      if (owner.contains(document.activeElement)) document.activeElement.blur();
+      hideHelp(null, true);
     });
     window.addEventListener('resize', () => {
       if (activeHelp) positionHelp(activeHelp.owner, activeHelp.tooltip);
