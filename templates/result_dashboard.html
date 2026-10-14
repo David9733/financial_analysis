@@ -15,7 +15,7 @@
 {% macro render_matrix(title, matrix, description='', summary_items=none) -%}
   {% if matrix.rows %}
     <section class="comparison-block">
-      <div class="section-heading compact-heading"><h3>{{ title }}</h3>{% if summary_items %}<div class="radar-summary-list" aria-label="매크로 레이더 판정 요약">{% for item in summary_items %}<span class="radar-summary-item"><strong>{{ item.label }}:</strong> {{ item.value }}</span>{% endfor %}</div>{% elif description %}<span>{{ description }}</span>{% endif %}</div>
+      <div class="section-heading compact-heading{% if summary_items %} radar-heading{% if matrix.companies|length > 1 %} is-multi-company{% endif %}{% endif %}"><h3>{{ title }}</h3>{% if summary_items %}<div class="radar-summary-list" aria-label="매크로 레이더 판정 요약">{% for item in summary_items %}<span class="radar-summary-item"><strong>{{ item.label }}:</strong> {{ item.value }}</span>{% endfor %}</div>{% elif description %}<span>{{ description }}</span>{% endif %}</div>
       {% if matrix.companies|length == 1 %}
         <div class="single-kpi-table-wrap">
           <table class="single-kpi-table">
@@ -380,6 +380,7 @@
       tooltip.classList.remove('is-floating', 'is-warning-floating');
       tooltip.removeAttribute('style');
       activeOwner.appendChild(tooltip);
+      activeOwner.setAttribute('aria-expanded', 'false');
       activeHelp = null;
     }
     function showHelp(owner) {
@@ -395,10 +396,12 @@
         tooltip.classList.add('is-floating');
         tooltip.classList.toggle('is-warning-floating', owner.classList.contains('kpi-warning-item'));
         activeHelp = { owner, tooltip };
+        owner.setAttribute('aria-expanded', 'true');
       }
       positionHelp(owner, tooltip);
     }
     helpItems.forEach((owner) => {
+      owner.setAttribute('aria-expanded', 'false');
       owner.addEventListener('mouseenter', () => showHelp(owner));
       owner.addEventListener('mouseleave', () => hideHelp(owner));
       owner.addEventListener('focusin', () => showHelp(owner));

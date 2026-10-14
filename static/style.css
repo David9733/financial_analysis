@@ -176,8 +176,8 @@ code { padding: 8px 11px; border: 1px solid var(--line); border-radius: 999px; c
   transform: none;
 }
 .kpi-help-tooltip.is-floating.is-warning-floating { color: #714800; background: #fffaf0; }
-.kpi-help-item:hover .kpi-help-tooltip,
-.kpi-help-item:focus .kpi-help-tooltip {
+body:not(.result-page) .kpi-help-item:hover .kpi-help-tooltip,
+body:not(.result-page) .kpi-help-item:focus .kpi-help-tooltip {
   opacity: 1;
   visibility: visible;
   transform: translateY(0);
@@ -761,7 +761,10 @@ tbody tr:hover { background: #f7faff; }
 .insight-details-body { padding-top: 18px; }
 
 .comparison-block { margin-bottom: 26px; padding: 26px; border-radius: 24px; background: #fff; box-shadow: var(--shadow); }
-.radar-summary-list { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.radar-heading h3 { flex: 0 0 auto; white-space: nowrap; }
+.radar-heading.is-multi-company { align-items: flex-start; flex-direction: column; gap: 12px; }
+.radar-heading.is-multi-company .radar-summary-list { justify-content: flex-start; }
+.radar-summary-list { display: flex; min-width: 0; flex: 1 1 auto; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .section-heading .radar-summary-item { padding: 7px 10px; border-radius: 10px; color: #4e5968; background: #f2f4f6; font-size: 12px; line-height: 1.35; }
 .radar-summary-item strong { color: #191f28; }
 .single-kpi-table-wrap { overflow: visible; border: 1px solid #e5e8eb; border-radius: 16px; }
