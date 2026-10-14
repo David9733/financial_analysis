@@ -435,6 +435,26 @@ class KPIAnalysisTests(unittest.TestCase):
         self.assertEqual(market["price_to_ma20"]["value"], expected)
         self.assertEqual(market["bollinger_position"]["status"], "available")
 
+    def test_short_radar_window_explains_insufficient_rolling_values(self):
+        from src.kpi_analysis import _macro_radar_metrics
+
+        size = 18
+        index = pd.RangeIndex(size)
+        company = pd.Series([(-1) ** step * (step + 1) for step in range(size)], index=index, dtype="float64")
+        market = company * 0.5
+        macro = company * 0.8 + 0.1
+        valid = pd.Series(True, index=index)
+        valid.iloc[0] = False
+
+        result = _macro_radar_metrics(
+            "usd_krw", company, market, macro, valid, valid, 0.9, None, None, "1m"
+        )
+
+        persistence = result["radar_usd_krw_sign_persistence"]
+        self.assertEqual(persistence["status"], "no_comparison_period")
+        self.assertIn("10거래일 이동상관 값이", persistence["reason"])
+        self.assertIn("3개월 이상", persistence["reason"])
+
     def test_short_selection_without_history_marks_moving_average_kpis(self):
         selected = self.stock_frame().tail(15).copy()
 

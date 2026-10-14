@@ -707,6 +707,7 @@ tbody tr:hover { background: #f7faff; }
 .company-star-chart { display: block; width: 100%; height: auto; overflow: visible; }
 .star-grid-ring { fill: none; stroke: #dfe3e8; stroke-width: 1; }
 .star-axis-line { stroke: #e5e8eb; stroke-width: 1; }
+.matrix-notes { margin: 10px 0 0; padding: 0; list-style: none; color: #6b7684; font-size: 12px; line-height: 1.6; text-align: right; }
 .star-axis-label { fill: #333d4b; font-size: 14px; font-weight: 700; }
 .star-axis-label.has-help { cursor: help; outline: none; }
 .star-axis-label.has-help:focus-visible { text-decoration: underline; }

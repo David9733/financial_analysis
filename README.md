@@ -75,7 +75,7 @@ https://github.com/user-attachments/assets/fd538833-aba5-4605-85de-0af79b1dd0b6
 - **고정 기준 5축 스타 점수**: 성장성, 수익성, 재무 안정성, 효율성과 시장흐름을 최신 KPI와 최근 3개년 추세로 0점에서 100점까지 요약
 - **데이터 품질 관리**: 결측 보간, 소수점 및 단위 오류 보정과 IQR 이상치 표시 내역을 `data_quality_log.csv`로 추적
 - **검증된 LLM 해석**: GPT가 쓴 문장의 근거 KPI, 숫자와 금지 표현을 Python으로 검증하고 실패 시 KPI 기반 대체 인사이트 제공
-- **재현 가능성**: 외부 API를 가짜 응답으로 대체한 테스트 184개, 고정 버전 `requirements.lock`
+- **재현 가능성**: 외부 API를 가짜 응답으로 대체한 테스트 187개, 고정 버전 `requirements.lock`
 
 ## 🔄 분석 파이프라인
 
@@ -281,7 +281,7 @@ uv run --python 3.10 --isolated --with-requirements requirements.lock src/app.py
 python -m unittest discover -s tests
 ```
 
-테스트 184개는 외부 API를 가짜 응답으로 대체하므로 네트워크와 API 키 없이 실행됩니다. `uv` 환경에서는 다음 명령으로 별도 가상환경 설정 없이 실행할 수 있습니다.
+테스트 187개는 외부 API를 가짜 응답으로 대체하므로 네트워크와 API 키 없이 실행됩니다. `uv` 환경에서는 다음 명령으로 별도 가상환경 설정 없이 실행할 수 있습니다.
 
 ```bash
 uv run --python 3.10 --isolated --with-requirements requirements.lock --with pytest -m pytest -q

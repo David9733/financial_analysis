@@ -34,6 +34,9 @@
           </table>
         </div>
       {% endif %}
+      {% if matrix.notes is defined and matrix.notes %}
+        <ul class="matrix-notes">{% for note in matrix.notes %}<li>'-' 표시 이유: {% if note.companies %}{{ note.companies | join(', ') }}: {% endif %}{{ note.reason }}</li>{% endfor %}</ul>
+      {% endif %}
     </section>
   {% endif %}
 {%- endmacro %}

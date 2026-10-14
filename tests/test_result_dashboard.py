@@ -18,6 +18,7 @@ from src.app import (
     build_macro_radar_matrix,
     build_macro_radar_summaries,
     build_market_overview_cards,
+    build_matrix_notes,
     build_star_axis_help,
     group_stock_chart_items,
 )
@@ -29,6 +30,34 @@ def metric(value, unit="%", status="available") -> dict:
 
 
 class ResultDashboardViewModelTests(unittest.TestCase):
+    def test_matrix_notes_merge_shared_reason_without_company_names(self):
+        missing = {"value": None, "unit": "%", "status": "no_comparison_period", "reason": "거래일 부족"}
+        payload = {
+            "companies": [
+                {"company": "가", "macro_kpi": {"a": missing, "b": missing}},
+                {"company": "나", "macro_kpi": {"a": missing, "b": metric(1.0)}},
+            ]
+        }
+
+        notes = build_matrix_notes(payload, "macro_kpi", ("a", "b"))
+
+        self.assertEqual(notes, [{"companies": [], "reason": "거래일 부족"}])
+
+    def test_matrix_notes_name_companies_when_reasons_differ(self):
+        payload = {
+            "companies": [
+                {
+                    "company": "가",
+                    "macro_kpi": {"a": {"value": None, "status": "missing", "reason": "데이터 없음"}},
+                },
+                {"company": "나", "macro_kpi": {"a": metric(0.5)}},
+            ]
+        }
+
+        notes = build_matrix_notes(payload, "macro_kpi", ("a",))
+
+        self.assertEqual(notes, [{"companies": ["가"], "reason": "데이터 없음"}])
+
     def test_star_axis_help_uses_single_industry_formula(self):
         help_texts = build_star_axis_help([{"analysis_type": "일반기업"}])
 

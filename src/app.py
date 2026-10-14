@@ -779,6 +779,36 @@ def build_macro_radar_matrix(payload: dict) -> dict:
     return build_kpi_matrix(payload, "macro_kpi", keys)
 
 
+def build_matrix_notes(
+    payload: dict, section: str, keys: list[str] | tuple[str, ...]
+) -> list[dict]:
+    """표에 "-"로 보이는 지표의 계산 불가 사유를 기업별로 모아 중복 없이 만든다."""
+    companies = payload.get("companies", [])
+    companies_by_reason: dict[str, list[str]] = {}
+    for company in companies:
+        name = company.get("company", "")
+        metrics = company.get(section, {})
+        for key in keys:
+            metric = metrics.get(key)
+            if not metric or metric.get("status") == "available":
+                continue
+            reason = metric.get("reason")
+            if not reason:
+                continue
+            names = companies_by_reason.setdefault(reason, [])
+            if name not in names:
+                names.append(name)
+
+    all_names = [company.get("company", "") for company in companies]
+    return [
+        {
+            "companies": [] if len(all_names) == 1 or names == all_names else names,
+            "reason": reason,
+        }
+        for reason, names in companies_by_reason.items()
+    ]
+
+
 def build_macro_radar_summaries(payload: dict) -> list[dict]:
     """레이더 최종 판정을 표 행 대신 제목 옆 요약으로 만든다."""
     companies = payload.get("companies", [])
@@ -1651,13 +1681,23 @@ def analyze():
             "macro_kpi",
             exclude_keys=MACRO_TABLE_HIDDEN_KEYS,
         ),
-        macro_radar_matrix=build_macro_radar_matrix(integrated.kpi_payload),
+        macro_radar_matrix={
+            **build_macro_radar_matrix(integrated.kpi_payload),
+            "notes": build_matrix_notes(
+                integrated.kpi_payload, "macro_kpi", MACRO_RADAR_TABLE_KEYS
+            ),
+        },
         macro_radar_summaries=build_macro_radar_summaries(
             integrated.kpi_payload
         ),
-        scenario_matrix=build_kpi_matrix(
-            integrated.kpi_payload, "macro_kpi", keys=SCENARIO_TABLE_KEYS
-        ),
+        scenario_matrix={
+            **build_kpi_matrix(
+                integrated.kpi_payload, "macro_kpi", keys=SCENARIO_TABLE_KEYS
+            ),
+            "notes": build_matrix_notes(
+                integrated.kpi_payload, "macro_kpi", SCENARIO_TABLE_KEYS
+            ),
+        },
         market_overview=build_market_overview_cards(integrated.market_overview),
         gpt_insights=gpt_insight_cards,
         gpt_comparisons=gpt_comparison_cards,

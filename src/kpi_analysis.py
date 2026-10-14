@@ -547,7 +547,11 @@ def _weak_krw_rising_rate_scenario(
     ]
     days = len(scenario)
     if days == 0:
-        reason = "선택 기간에 환율 +0.3% 이상 및 금리 +3bp 이상인 거래일 없음"
+        reason = (
+            "조회기간에 환율 +0.3% 이상과 국고채 3년 금리 +3bp 이상이 같은 날 나타난 "
+            "거래일이 없어 수익률과 판정을 계산하지 않았습니다. 기준은 낮추지 않으며, "
+            "1년 이상으로 조회하면 해당일이 나올 수 있습니다."
+        )
         result = {
             "weak_krw_rising_rate_days": _metric(0, "일", digits=0),
             "weak_krw_rising_rate_company_return": _metric(
@@ -697,7 +701,10 @@ def _macro_radar_metrics(
         )
         if len(rolling) < RADAR_MIN_ROLLING_VALUES:
             stability_reason = (
-                f"안정성 판정에 필요한 {window}거래일 이동 상관 관측치가 부족함"
+                # 요인마다 개수가 달라도 표 아래 안내가 하나로 합쳐지도록 개수는 넣지 않는다.
+                f"{window}거래일 이동상관 값이 안정성 판정에 필요한 "
+                f"{RADAR_MIN_ROLLING_VALUES}개보다 적습니다. 조회기간이 짧거나 공휴일로 "
+                "거래일이 적으면 생길 수 있으며, 3개월 이상으로 조회하면 확인할 수 있습니다."
             )
         else:
             rolling_signs = pd.Series(0, index=rolling.index, dtype="int64")
