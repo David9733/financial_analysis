@@ -1,6 +1,8 @@
 # 📈 FINANCIAL LAB
 <img width="1344" height="483" alt="이미지2" src="https://github.com/user-attachments/assets/f1dc00fe-b880-45f7-9ea8-8660ad45b847" />
 
+[![배포 사이트 바로가기](https://img.shields.io/badge/LIVE%20SITE-OPEN-000000?style=for-the-badge&logo=vercel&logoColor=white)](https://financial-analysis-2026.vercel.app/)
+
 > 기업의 재무 성과와 주가가 시장지수, 환율, 금리 및 신용 스프레드와 어떻게 움직였는지 일별 데이터로 분석합니다.
 
 ![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=flat&logo=python&logoColor=white)
