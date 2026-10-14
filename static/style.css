@@ -112,6 +112,7 @@ code { padding: 8px 11px; border: 1px solid var(--line); border-radius: 999px; c
 .result-section h2, .result-section h3 { margin: 0; }
 .warning-list { margin-bottom: 26px; padding: 14px 18px; border: 1px solid #f5d7a1; border-radius: 14px; color: #805b10; background: #fffaf0; }
 .warning-list p { margin: 4px 0; }
+.data-quality-notice { display: none; }
 .data-quality-notice summary { cursor: pointer; font-weight: 800; }
 .data-quality-notice summary::marker { color: #c08316; }
 .kpi-company-grid, .insight-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 20px; }
@@ -953,6 +954,8 @@ tbody tr:hover { background: #f7faff; }
     word-break: keep-all;
     text-wrap: balance;
   }
+  .data-quality-desktop { display: none; }
+  .data-quality-notice { display: block; }
   .data-quality-notice p { margin-top: 10px; font-size: 13px; line-height: 1.6; }
   .market-overview-grid {
     display: grid;
@@ -974,9 +977,4 @@ tbody tr:hover { background: #f7faff; }
     border-top: 0;
     border-left: 1px solid #f0f1f3;
   }
-}
-
-@media (min-width: 681px) {
-  .data-quality-notice > summary { display: none; }
-  .data-quality-notice:not([open]) > :not(summary) { display: block !important; }
 }

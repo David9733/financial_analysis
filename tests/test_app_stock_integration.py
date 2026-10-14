@@ -229,6 +229,7 @@ class AppStockIntegrationTests(unittest.TestCase):
         html = response.get_data(as_text=True)
 
         self.assertEqual(response.status_code, 200)
+        self.assertIn('<p class="data-quality-desktop">', html)
         self.assertIn('<details class="data-quality-notice">', html)
         self.assertIn("<summary>데이터 처리 내역</summary>", html)
 

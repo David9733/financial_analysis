@@ -91,7 +91,7 @@
       <a class="button" href="{{ url_for('index') }}">새 분석</a>
     </header>
 
-    {% if warnings %}<section class="warning-list" aria-label="데이터 조회 안내">{% for warning in warnings %}{% if warning.startswith('데이터 처리:') %}<details class="data-quality-notice"><summary>데이터 처리 내역</summary><p>{{ warning }}</p></details>{% else %}<p>{{ warning }}</p>{% endif %}{% endfor %}</section>{% endif %}
+    {% if warnings %}<section class="warning-list" aria-label="데이터 조회 안내">{% for warning in warnings %}{% if warning.startswith('데이터 처리:') %}<p class="data-quality-desktop">{{ warning }}</p><details class="data-quality-notice"><summary>데이터 처리 내역</summary><p>{{ warning }}</p></details>{% else %}<p>{{ warning }}</p>{% endif %}{% endfor %}</section>{% endif %}
 
     <section class="overview-section" aria-labelledby="market-overview-title">
       <div class="section-heading compact-heading"><div><p class="eyebrow">MARKET SNAPSHOT</p><h2 id="market-overview-title">시장 환경</h2></div><span>휴장일에는 가장 최근 거래일 기준입니다.</span></div>
