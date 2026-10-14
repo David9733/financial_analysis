@@ -49,7 +49,7 @@ uv run --python 3.10 --isolated --with-requirements requirements.lock src/app.py
 | `/` | GET | 입력 화면 |
 | `/analyze` | POST | 분석 실행 후 결과 화면 반환 |
 | `/analysis-progress/<run_id>` | GET | 진행 단계와 진행률(JSON), 입력 화면이 주기적으로 조회 |
-| `/gpt-analysis/<run_id>` | GET | 백그라운드 GPT 분석 상태와 완성된 요약 화면 조각 반환 |
+| `/gpt-analysis/<run_id>` | GET, POST | GET은 백그라운드 GPT 분석 상태와 완성된 요약 화면 조각 반환, POST는 Vercel에서 브라우저가 보낸 KPI로 GPT 분석 실행 |
 | `/results/<run_id>/<파일 경로>` | GET | 해당 실행의 CSV와 차트 파일 |
 
 입력한 기업명은 재무 수집을 시작하기 전에 모두 검증합니다. 정확한 이름과 하나로 확정되는
@@ -57,6 +57,21 @@ uv run --python 3.10 --isolated --with-requirements requirements.lock src/app.py
 이름이 여러 개이면 `기업명을 확인해 주세요` 안내 아래에 입력별 후보를 한 번에 표시합니다.
 분석을 다시 제출하면 이전 오류를 숨기고 진행률 화면을 즉시 표시하며, 제출 중에는 기업 추가,
 삭제와 조회기간 변경을 잠급니다.
+
+### Vercel 배포
+
+배포 사이트는 `vercel.json`으로 `src/app.py`를 서버리스 함수로 실행하며 요청당 최대 실행 시간은
+300초입니다. 환경 변수 `VERCEL`이 있으면 다음처럼 동작합니다.
+
+| 항목 | 로컬 실행 | Vercel |
+|---|---|---|
+| 결과 저장 위치 | 프로젝트 루트의 `output/` | `/tmp/financial_analysis/output/` |
+| 차트 전달 | `/results/<run_id>/…` 파일 경로 | HTML에 이미지 직접 삽입. 차트 합계가 2.2MB를 넘으면 너비 1,200px, 품질 78의 WebP로 압축 |
+| GPT 분석 | 서버 백그라운드 스레드에서 실행하고 브라우저가 상태를 조회 | 브라우저가 압축된 KPI JSON을 `/gpt-analysis/<run_id>`에 POST해 한 요청 안에서 실행 |
+
+서버리스 인스턴스는 메모리와 임시 파일을 요청 사이에 공유하지 않으므로 GPT 분석에 필요한 KPI를
+zlib과 base64로 압축해 화면에 담아 둡니다. 압축 데이터는 1MB, 압축 해제 후 데이터는 4MB를 넘으면
+거부합니다. 결과 저장 위치는 `FINANCIAL_ANALYSIS_RUNTIME_DIR` 환경 변수로 직접 지정할 수도 있습니다.
 
 ### CLI
 
@@ -115,7 +130,8 @@ uv pip compile --python-version 3.10 requirements.txt -o requirements.lock
 ### Open DART
 
 - 기업 기본정보, 상장 종목코드와 연간 재무제표를 사용합니다.
-- 기업코드 캐시는 `.cache/corp_codes.json`에 저장하고 7일 후 갱신합니다.
+- 기업코드 캐시는 `.cache/corp_codes.json`에 저장하고 7일 후 갱신합니다. 캐시가 없으면 저장소에
+  포함된 `data/corp_codes.zip`을 먼저 사용하고, 그것도 읽을 수 없을 때만 DART에서 내려받습니다.
 - 화면 조회기간과 별도로 최근 3개 연속 사업연도 추세 계산에 필요한 사업보고서를 최대 4개
   확보합니다.
 - 금융업과 보험업의 과거 연도 단독 응답이 없으면 최신 사업보고서의 `frmtrm_amount`와
@@ -153,8 +169,9 @@ CSV와 차트는 정상적으로 제공합니다.
 웹에서는 재무, 주가와 매크로 분석을 먼저 완료해 재무 탭을 표시하고 GPT 분석은 별도
 스레드에서 실행합니다. 브라우저는 `/gpt-analysis/<run_id>`를 주기적으로 조회해 완성된
 내용만 요약 탭에 넣습니다. GPT 요청은 최대 10초 동안 기다리며 시간 초과, 인증 오류,
-검증 실패나 API 오류가 발생하면 계산된 KPI 기반 분석을 표시합니다. CLI는 기존처럼
-`include_gpt` 설정에 따라 통합 실행할 수 있습니다.
+검증 실패나 API 오류가 발생하면 계산된 KPI 기반 분석을 표시합니다. 웹에서는 10초 제한 때문에
+GPT에 한 번만 요청하고, 검증에 실패한 문장은 다시 요청하지 않고 KPI 기반 문장으로 교체합니다.
+최대 3번 요청은 CLI에 적용되며, CLI는 기존처럼 `include_gpt` 설정에 따라 통합 실행할 수 있습니다.
 
 ## 6. 출력 구조
 
@@ -198,7 +215,15 @@ src/
 ├── stock_visualization.py    # 시장 시각화
 ├── correlation_insight.py    # 히트맵 종합 인사이트
 ├── analysis_prompt.py        # GPT 분석 지침
-└── gpt_analysis.py           # GPT 생성과 검증
+├── gpt_analysis.py           # GPT 생성과 검증
+└── exchange_rate_interest_correlation.py  # 환율과 금리 상관 단독 예제 (파이프라인에서 사용하지 않음)
+
+templates/
+├── index.html                # 입력 화면과 진행률
+├── result_dashboard.html     # 결과 화면 (재무, 주가, 매크로, 요약 탭)
+├── _gpt_analysis.html        # GPT 분석 화면 조각
+├── _chat_widget.html         # Chatling 안내 챗봇
+└── _favicon.html             # 파비콘
 ```
 
 ## 8. 문제 해결
@@ -236,6 +261,9 @@ src/
 - 실행 로그에는 API 키나 전체 KPI 대신 `run_id`, 단계, 기업 수, 경고 수와 처리시간을 기록합니다.
 - 외부 서비스에는 해당 요청에 필요한 기업, 종목, 날짜와 인증키만 전송합니다.
 - OpenAI 분석 시 기업명과 KPI JSON이 전송되지만 API 키는 요청 본문이나 로그에 남기지 않습니다.
+- 입력 화면과 결과 화면은 Chatling 챗봇 스크립트(`templates/_chat_widget.html`)를 불러옵니다.
+  사용자가 챗봇에 입력한 내용은 Chatling 서버로 전송되며, 분석 결과와 API 키는 챗봇에 전달하지
+  않습니다. 챗봇은 대화 ID를 브라우저 쿠키에 최대 30일 보관합니다.
 
-인터넷 공개 배포 시에는 사용자 인증, 요청 제한, HTTPS, 운영용 WSGI 서버와 별도 결과
-정리 정책이 추가로 필요합니다.
+현재 Vercel 배포 사이트에는 사용자 인증과 요청 제한이 없습니다. 이용자가 늘어나면 외부 API 호출
+한도를 지키기 위해 요청 제한과 사용자 인증을 추가해야 합니다.
