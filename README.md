@@ -8,11 +8,11 @@
 ![Matplotlib](https://img.shields.io/badge/Matplotlib-Visualization-11557C?style=flat)
 ![Flask](https://img.shields.io/badge/Flask-Web%20App-000000?style=flat&logo=flask&logoColor=white)
 ![Open DART](https://img.shields.io/badge/Open%20DART-FSS-0B6BCB?style=flat)
-![Tests](https://img.shields.io/badge/Tests-176-2EA44F?style=flat)
+![Tests](https://img.shields.io/badge/Tests-178-2EA44F?style=flat)
 
 기업명을 입력하면 재무제표와 일별 시장 데이터를 수집하고, 업종별 KPI, 5축 기업 스타차트, 주가 흐름, 투자자 거래량, 상관관계와 매크로 레이더를 한 화면에 보여 줍니다. 한 기업을 넣으면 상세 분석, 두 기업 이상을 넣으면 비교 분석으로 표시합니다.
 
-**목차**: [배경](#-프로젝트-배경) | [핵심 성과](#-핵심-성과) | [파이프라인](#-분석-파이프라인) | [분석 설계](#-분석-설계와-의사결정) | [데이터 품질](#-데이터-품질-관리) | [LLM 활용](#-llm-활용-방식) | [트러블슈팅](#️-트러블슈팅) | [빠른 시작](#-빠른-시작) | [한계](#️-한계와-향후-개선)
+**목차**: [배경](#-프로젝트-배경) | [핵심 성과](#-핵심-성과) | [파이프라인](#-분석-파이프라인) | [분석 설계](#-분석-설계와-의사결정) | [데이터 품질](#-데이터-품질-관리) | [LLM 활용](#-llm-활용-방식) | [트러블슈팅](#️-트러블슈팅) | [빠른 시작](#-빠른-시작) | [사용 방법](#-사용-방법) | [한계](#️-한계와-향후-개선)
 
 ## 🎬 시연
 
@@ -37,7 +37,7 @@ https://github.com/user-attachments/assets/fd538833-aba5-4605-85de-0af79b1dd0b6
 - **고정 기준 5축 스타 점수**: 성장성, 수익성, 재무 안정성, 효율성과 시장흐름을 최신 KPI와 최근 3개년 추세로 0점에서 100점까지 요약
 - **데이터 품질 관리**: 결측 보간, 소수점 및 단위 오류 보정과 IQR 이상치 표시 내역을 `data_quality_log.csv`로 추적
 - **검증된 LLM 해석**: GPT가 쓴 문장의 근거 KPI, 숫자와 금지 표현을 Python으로 검증하고 실패 시 KPI 기반 대체 인사이트 제공
-- **재현 가능성**: 외부 API를 가짜 응답으로 대체한 테스트 176개, 고정 버전 `requirements.lock`
+- **재현 가능성**: 외부 API를 가짜 응답으로 대체한 테스트 178개, 고정 버전 `requirements.lock`
 
 ## 🔄 분석 파이프라인
 
@@ -155,6 +155,8 @@ GPT는 데이터를 새로 계산하거나 수집하지 않고, **Python과 Pand
 | 기업명 오타나 합병 전후의 비슷한 법인명 때문에 다른 기업이 선택될 수 있음 | 정확한 이름과 명확한 부분 일치만 자동 선택하고, 오타는 최대 5개 후보를 안내해 사용자가 정확한 이름을 다시 입력하도록 처리 |
 | 투자자 동향은 공식 API가 없어 응답 형식 변경 시 실패 가능 | 별도 예외로 분리해 실패해도 나머지 분석은 계속 진행하고 경고만 표시 |
 
+API 키 누락, 기업명 검색 실패, 서비스 미승인 및 호출 한도 오류의 원인과 조치는 [기술 및 운영 가이드의 문제 해결](docs/technical-guide.md#8-문제-해결)에서 확인할 수 있습니다.
+
 ## 🖥️ 화면 구성
 
 결과 화면 상단에는 KOSPI, KOSDAQ, 원/달러 환율과 금리의 최신값 및 기업 스냅샷을 표시합니다.
@@ -181,6 +183,14 @@ GPT는 데이터를 새로 계산하거나 수집하지 않고, **Python과 Pand
 
 ## 🚀 빠른 시작
 
+### 사전 요구사항
+
+- Python 3.10 이상
+- Open DART API 키
+- 선택 기능을 사용할 경우 공공데이터포털, 한국은행 ECOS 및 OpenAI API 키
+
+공공데이터포털에서는 금융위원회의 `주식시세정보`와 `지수시세정보`를 각각 활용 신청해야 합니다. 선택 API 키가 없거나 호출에 실패하면 해당 데이터만 제외하고 가능한 분석은 계속 실행합니다.
+
 ### 1. API 키 준비
 
 ```bash
@@ -196,6 +206,8 @@ cp .env.example .env        # Windows PowerShell: Copy-Item .env.example .env
 | `ECOS_API_KEY` | 선택 | 환율, 금리와 신용 스프레드 지표 제외 |
 | `OPENAI_API_KEY` | 선택 | KPI 기반 대체 인사이트 표시 |
 | `OPENAI_MODEL` | 선택 | 기본값 `gpt-4o-mini` |
+
+`DART_API_KEY`, `STOCK_API_KEY` 및 `GPT_KEY`도 각각 `DART_KEY`, `PUBLIC_STOCK_API_KEY` 및 `OPENAI_API_KEY`의 호환 이름으로 인식합니다. 시스템 환경 변수와 `.env`에 같은 키가 있으면 시스템 환경 변수를 우선합니다. API 키 발급처와 데이터별 상세 설정은 [기술 및 운영 가이드](docs/technical-guide.md#1-api-키)를 참고하세요.
 
 ### 2. 설치와 실행
 
@@ -217,13 +229,40 @@ python -m venv .venv
 uv run --python 3.10 --isolated --with-requirements requirements.lock src/app.py
 ```
 
+`requirements.txt`는 호환 가능한 버전 범위를, `requirements.lock`은 검증된 고정 버전을 담습니다. 재현 가능한 실행에는 `requirements.lock` 사용을 권장합니다.
+
 ### 3. 테스트
 
 ```bash
 python -m unittest discover -s tests
 ```
 
-테스트 176개는 외부 API를 가짜 응답으로 대체하므로 네트워크와 API 키 없이 실행됩니다.
+테스트 178개는 외부 API를 가짜 응답으로 대체하므로 네트워크와 API 키 없이 실행됩니다. `uv` 환경에서는 다음 명령으로 별도 가상환경 설정 없이 실행할 수 있습니다.
+
+```bash
+uv run --python 3.10 --isolated --with-requirements requirements.lock --with pytest -m pytest -q
+```
+
+## 🧭 사용 방법
+
+### 웹 대시보드
+
+1. 기업명을 1개에서 10개까지 입력합니다. 쉼표, 세미콜론 및 줄바꿈으로 구분할 수 있으며 중복 이름은 자동으로 제거됩니다.
+2. 재무제표 조회기간은 최근 1년에서 10년, 주가 조회기간은 1개월, 3개월, 6개월, 1년 및 3년 중에서 선택합니다.
+3. 한 기업은 상세 분석, 두 기업 이상은 동일한 기준의 비교 분석으로 표시됩니다.
+4. 결과 화면의 재무, 주가, 매크로 및 요약 탭을 확인하고 필요한 CSV와 차트를 내려받습니다.
+
+기업명은 정확히 일치하거나 하나의 법인으로 확정되는 부분 이름만 자동 선택합니다. 오타나 여러 법인과 일치하는 이름은 후보를 안내하며, 사용자가 정확한 기업명을 다시 입력해야 합니다.
+
+### CLI
+
+`src/main.py` 상단의 `COMPANIES`, `START_YEAR`, `END_YEAR` 및 `NUMBER_OF_YEARS`를 설정한 뒤 실행합니다.
+
+```bash
+python src/main.py
+```
+
+CLI의 기본 주가 조회기간은 1년이며 결과는 `output/cli/`에 저장됩니다. 코드에서 조회기간이나 GPT 실행 여부를 제어하려면 `run_integrated_analysis()`를 직접 사용할 수 있습니다. 자세한 예시는 [기술 및 운영 가이드](docs/technical-guide.md#cli)를 참고하세요.
 
 ## 📤 생성 결과
 
