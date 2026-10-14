@@ -567,6 +567,86 @@ def build_star_score_cards(payload: dict) -> list[dict]:
     return cards
 
 
+STAR_AXIS_ORDER = (
+    ("growth", "성장성"),
+    ("profitability", "수익성"),
+    ("stability", "재무 안정성"),
+    ("efficiency", "효율성"),
+    ("market", "시장흐름"),
+)
+# star_score.build_star_score의 업종별 구성 KPI와 가중치를 사용자용 문장으로 옮긴 것이다.
+STAR_AXIS_FORMULAS = {
+    "growth": {
+        "일반기업": "매출 성장률 40% + 영업이익 성장률 30% + 당기순이익 성장률 30%",
+        "금융업": (
+            "순이자손익 성장률 40% + 순수수료손익 성장률 30% + 총자산 성장률 15% "
+            "+ 당기순이익 성장률 15%"
+        ),
+        "보험업": (
+            "보험서비스수익 성장률 40% + 총자산 성장률 20% + 영업이익 성장률 20% "
+            "+ 당기순이익 성장률 20%"
+        ),
+    },
+    "profitability": {
+        "일반기업": "영업이익률 30% + 순이익률 25% + ROE 25% + ROA 20%",
+        "금융업": "ROE 50% + ROA 50%",
+        "보험업": "보험서비스마진 40% + ROE 30% + ROA 30%",
+    },
+    "stability": {
+        "일반기업": "부채비율 50%(낮을수록 높은 점수) + 이자보상배율 50%",
+        "금융업": "자기자본비중(자본총계 ÷ 총자산) 60% + 최근 3년 흑자 지속 40%",
+        "보험업": "자기자본비중(자본총계 ÷ 총자산) 60% + 최근 3년 흑자 지속 40%",
+    },
+    "efficiency": {
+        "일반기업": "매출채권 회전일수 100%(짧을수록 높은 점수)",
+        "금융업": "(순이자손익 + 순수수료손익) ÷ 평균자산 60% + ROA 40%",
+        "보험업": "(보험서비스수익 + 투자손익) ÷ 평균자산 60% + ROA 40%",
+    },
+}
+STAR_MARKET_FORMULA = (
+    "시장 대비 초과수익률(기간 수익률 − 소속 시장지수 수익률) 50% + 기간 수익률 20% "
+    "+ 20일 이동평균 대비 20% + 일간 변동성 10%(낮을수록 높은 점수)"
+)
+STAR_FINANCIAL_AXIS_NOTE = (
+    "각 KPI를 고정 기준점으로 0~100점 환산한 수준 점수 80%와 최근 3년 추세 점수 "
+    "20%(개선 100, 보합 60, 변동 40, 악화 0)를 합칩니다."
+)
+STAR_MARKET_AXIS_NOTE = (
+    "각 지표를 고정 기준점으로 0~100점 환산하며 3년 추세는 반영하지 않습니다."
+)
+STAR_MISSING_NOTE = (
+    "일부 KPI가 없으면 남은 비중으로 다시 나누고, 예정 비중의 50% 미만만 계산되면 "
+    "자료 부족으로 표시합니다."
+)
+
+
+def build_star_axis_help(star_cards: list[dict]) -> dict[str, str]:
+    """스타차트 축별 계산식을 조회한 기업의 업종에 맞춰 만든다."""
+    industries = list(
+        dict.fromkeys(
+            card.get("analysis_type")
+            for card in star_cards
+            if card.get("analysis_type") in STAR_AXIS_FORMULAS["growth"]
+        )
+    ) or ["일반기업"]
+    help_texts = {}
+    for key, label in STAR_AXIS_ORDER:
+        if key == "market":
+            lines = [f"{label} = {STAR_MARKET_FORMULA}", STAR_MARKET_AXIS_NOTE]
+        else:
+            formulas = STAR_AXIS_FORMULAS[key]
+            if len(industries) == 1:
+                lines = [f"{label} = {formulas[industries[0]]}"]
+            else:
+                lines = [f"{label}"] + [
+                    f"[{industry}] {formulas[industry]}" for industry in industries
+                ]
+            lines.append(STAR_FINANCIAL_AXIS_NOTE)
+        lines.append(STAR_MISSING_NOTE)
+        help_texts[key] = "\n".join(lines)
+    return help_texts
+
+
 HEADLINE_KPI_KEYS = {
     "일반기업": ("revenue_growth", "operating_margin", "roe", "debt_ratio"),
     "금융업": ("net_interest_income", "net_fee_income", "roe", "roa"),
@@ -1559,6 +1639,7 @@ def analyze():
         stock_period_label=STOCK_PERIOD_LABELS[stock_period],
         kpi_cards=kpi_cards,
         star_score_cards=star_score_cards,
+        star_axis_help=build_star_axis_help(star_score_cards),
         headline_kpi_cards=headline_kpi_cards,
         headline_kpi_matrix=build_headline_kpi_matrix(integrated.kpi_payload),
         financial_kpi_matrix=build_financial_kpi_matrix(integrated.kpi_payload),

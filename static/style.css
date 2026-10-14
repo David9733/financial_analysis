@@ -708,6 +708,10 @@ tbody tr:hover { background: #f7faff; }
 .star-grid-ring { fill: none; stroke: #dfe3e8; stroke-width: 1; }
 .star-axis-line { stroke: #e5e8eb; stroke-width: 1; }
 .star-axis-label { fill: #333d4b; font-size: 14px; font-weight: 700; }
+.star-axis-label.has-help { cursor: help; outline: none; }
+.star-axis-label.has-help:focus-visible { text-decoration: underline; }
+.star-axis-help-mark { fill: #275a91; font-size: 11px; font-weight: 900; }
+.star-axis-tooltip { white-space: pre-line; }
 .star-scale-label { fill: #8b95a1; font-size: 10px; }
 .star-series-area { fill: currentColor; fill-opacity: .1; stroke: none; }
 .star-series-outline { fill: none; stroke: currentColor; stroke-width: 3; stroke-linejoin: round; }

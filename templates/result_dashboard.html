@@ -156,14 +156,15 @@
           {% endfor %}
         </div>
         <div class="star-chart-wrap">
-          <svg id="company-star-chart" class="company-star-chart" viewBox="0 0 640 540" role="img" aria-labelledby="star-chart-svg-title star-chart-svg-desc">
-            <title id="star-chart-svg-title">기업별 5축 KPI 스타차트</title>
+          <svg id="company-star-chart" class="company-star-chart" viewBox="0 0 640 540" role="img" aria-label="기업별 5축 KPI 스타차트" aria-describedby="star-chart-svg-desc">
+            {# SVG title은 브라우저 기본 툴팁으로 떠 축 계산식 말풍선을 가리므로 aria-label을 쓴다. #}
             <desc id="star-chart-svg-desc">성장성, 수익성, 재무 안정성, 효율성, 시장흐름 점수를 기업별로 비교합니다.</desc>
           </svg>
           <p id="star-chart-status" class="star-chart-status" aria-live="polite"></p>
         </div>
         <p class="star-score-notice"><strong>업종별 평가 기준:</strong> 일반기업은 매출, 이익률, 부채와 매출채권 회전일수를 반영하고, 금융업은 순이자손익, 순수수료손익, 자기자본비중과 자산효율을 반영하며, 보험업은 보험서비스수익, 보험서비스마진, 자기자본비중과 보험 및 투자수익의 자산효율을 반영합니다. 시장흐름은 모든 업종에 동일한 주가 및 시장지수 기준을 적용합니다.</p>
         <script id="star-score-data" type="application/json">{{ star_score_cards | tojson }}</script>
+        <script id="star-axis-help" type="application/json">{{ star_axis_help | tojson }}</script>
       </section>
       {% endif %}
 
@@ -431,6 +432,24 @@
       const center = { x: 320, y: 255 };
       const radius = 170;
       const labels = ['성장성', '수익성', '재무 안정성', '효율성', '시장흐름'];
+      const axisKeys = ['growth', 'profitability', 'stability', 'efficiency', 'market'];
+      const axisHelpElement = document.getElementById('star-axis-help');
+      const axisHelp = axisHelpElement ? JSON.parse(axisHelpElement.textContent) : {};
+      const axisTooltip = document.createElement('span');
+      axisTooltip.className = 'kpi-help-tooltip star-axis-tooltip';
+      axisTooltip.id = 'star-axis-tooltip';
+      axisTooltip.setAttribute('role', 'tooltip');
+      document.body.appendChild(axisTooltip);
+      const showAxisHelp = (owner, text) => {
+        axisTooltip.textContent = text;
+        axisTooltip.classList.add('is-floating');
+        positionHelp(owner, axisTooltip);
+      };
+      const hideAxisHelp = () => {
+        axisTooltip.classList.remove('is-floating');
+        axisTooltip.removeAttribute('style');
+      };
+      document.addEventListener('keydown', (event) => { if (event.key === 'Escape') hideAxisHelp(); });
       const pointAt = (index, scale) => {
         const angle = (-90 + index * 72) * Math.PI / 180;
         return { x: center.x + Math.cos(angle) * radius * scale, y: center.y + Math.sin(angle) * radius * scale };
@@ -454,6 +473,21 @@
         const labelPoint = pointAt(index, 1.22);
         const text = addSvg('text', { x: labelPoint.x, y: labelPoint.y, class: 'star-axis-label', 'text-anchor': index === 0 ? 'middle' : (index === 1 || index === 2 ? 'start' : 'end'), 'dominant-baseline': 'middle' });
         text.textContent = label;
+        const helpText = axisHelp[axisKeys[index]];
+        if (helpText) {
+          const mark = document.createElementNS(svgNamespace, 'tspan');
+          mark.setAttribute('class', 'star-axis-help-mark');
+          mark.setAttribute('dx', '4');
+          mark.textContent = '?';
+          text.appendChild(mark);
+          text.classList.add('has-help');
+          text.setAttribute('tabindex', '0');
+          text.setAttribute('aria-describedby', 'star-axis-tooltip');
+          text.addEventListener('mouseenter', () => showAxisHelp(text, helpText));
+          text.addEventListener('focus', () => showAxisHelp(text, helpText));
+          text.addEventListener('mouseleave', () => { if (document.activeElement !== text) hideAxisHelp(); });
+          text.addEventListener('blur', hideAxisHelp);
+        }
       });
       [25, 50, 75, 100].forEach((value) => {
         const y = center.y - radius * value / 100;

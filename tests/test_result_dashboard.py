@@ -18,6 +18,7 @@ from src.app import (
     build_macro_radar_matrix,
     build_macro_radar_summaries,
     build_market_overview_cards,
+    build_star_axis_help,
     group_stock_chart_items,
 )
 from src.main import _market_overview_item, collect_market_macro
@@ -28,6 +29,34 @@ def metric(value, unit="%", status="available") -> dict:
 
 
 class ResultDashboardViewModelTests(unittest.TestCase):
+    def test_star_axis_help_uses_single_industry_formula(self):
+        help_texts = build_star_axis_help([{"analysis_type": "일반기업"}])
+
+        self.assertEqual(
+            list(help_texts),
+            ["growth", "profitability", "stability", "efficiency", "market"],
+        )
+        self.assertTrue(
+            help_texts["growth"].startswith(
+                "성장성 = 매출 성장률 40% + 영업이익 성장률 30% + 당기순이익 성장률 30%"
+            )
+        )
+        self.assertIn("최근 3년 추세 점수", help_texts["growth"])
+        self.assertIn("3년 추세는 반영하지 않습니다", help_texts["market"])
+
+    def test_star_axis_help_lists_each_industry_once(self):
+        help_texts = build_star_axis_help(
+            [
+                {"analysis_type": "일반기업"},
+                {"analysis_type": "금융업"},
+                {"analysis_type": "일반기업"},
+            ]
+        )
+
+        self.assertEqual(help_texts["profitability"].count("[일반기업]"), 1)
+        self.assertIn("[금융업] ROE 50% + ROA 50%", help_texts["profitability"])
+        self.assertNotIn("[보험업]", help_texts["profitability"])
+
     def test_financial_kpi_matrix_combines_value_and_trend_badge(self):
         payload = {
             "companies": [
