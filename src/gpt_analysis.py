@@ -876,7 +876,7 @@ def _deterministic_section(
                 summary=f"최근 연도의 {joined} 성장률은 모두 양수입니다.",
                 evidence_keys=available,
             )
-        trend = _trend_section(metrics, keys, "성장성")
+        trend = _trend_section(metrics, keys, "성장률")
         if trend:
             return trend
     if section_name == "profitability":

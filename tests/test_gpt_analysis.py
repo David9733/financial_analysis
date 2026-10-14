@@ -102,6 +102,24 @@ class GPTAnalysisTests(unittest.TestCase):
         self.assertIn("모두 개선", summaries["개선기업"])
         self.assertIn("혼재", summaries["혼재기업"])
 
+    def test_fallback_accepts_mixed_growth_trend_summary(self):
+        payload = self.payload()
+        payload["companies"][0]["financial_trend"] = {
+            "revenue_growth": {
+                "value": "변동", "unit": "", "status": "available", "reason": None
+            },
+            "operating_profit_growth": {
+                "value": "개선", "unit": "", "status": "available", "reason": None
+            },
+            "net_income_growth": {
+                "value": "개선", "unit": "", "status": "available", "reason": None
+            },
+        }
+
+        result = build_fallback_insights(payload)
+
+        self.assertIn("최근 3년 성장률 추세", result["analyses"][0]["growth"]["summary"])
+
     def test_multi_company_fallback_builds_category_comparisons(self):
         payload = self.payload()
         first = payload["companies"][0]

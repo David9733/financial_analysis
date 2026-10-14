@@ -6,7 +6,6 @@ import base64
 import json
 import logging
 import os
-import queue
 import re
 import shutil
 import threading
@@ -49,7 +48,9 @@ PROJECT_ROOT = APP_DIR.parent
 WEB_RUNS_DIR = OUTPUT_DIR / "web_runs"
 WEB_RUN_RETENTION_SECONDS = 60 * 60
 COMPLETED_MARKER_NAME = ".completed"
-GPT_WEB_TIMEOUT_SECONDS = 10.0
+GPT_BACKGROUND_TIMEOUT_SECONDS = float(
+    os.getenv("GPT_BACKGROUND_TIMEOUT_SECONDS", "240")
+)
 VERCEL_INLINE_CHART_MAX_WIDTH = 1200
 VERCEL_INLINE_CHART_QUALITY = 78
 VERCEL_INLINE_PNG_BUDGET_BYTES = 2_200_000
@@ -978,7 +979,7 @@ def start_async_gpt_analysis(
     macro_chart_groups: list[dict],
     run_dir: Path,
 ) -> None:
-    """기본 결과 화면을 막지 않고 GPT 분석을 최대 10초 동안 생성한다."""
+    """기본 결과 화면을 막지 않고 GPT 분석을 백그라운드에서 생성한다."""
     with PROGRESS_LOCK:
         GPT_RUNS[run_id] = {
             "status": "loading",
@@ -989,44 +990,21 @@ def start_async_gpt_analysis(
     def worker() -> None:
         with PROGRESS_LOCK:
             ACTIVE_RUN_IDS.add(run_id)
-        result_queue: queue.Queue = queue.Queue(maxsize=1)
-
-        def request_gpt() -> None:
-            try:
-                result_queue.put(
-                    (
-                        "complete",
-                        analyze_kpis(
-                            payload,
-                            PROJECT_ROOT,
-                            timeout=GPT_WEB_TIMEOUT_SECONDS - 0.5,
-                            max_retries=0,
-                            max_validation_attempts=1,
-                        ),
-                    )
-                )
-            except Exception as error:
-                result_queue.put(("failed", error))
-
-        request_thread = threading.Thread(
-            target=request_gpt,
-            name=f"gpt-request-{run_id[:8]}",
-            daemon=True,
-        )
-        request_thread.start()
-        request_thread.join(GPT_WEB_TIMEOUT_SECONDS)
-
         notice = ""
-        if request_thread.is_alive():
+        try:
+            result = analyze_kpis(
+                payload,
+                PROJECT_ROOT,
+                timeout=GPT_BACKGROUND_TIMEOUT_SECONDS,
+                max_retries=0,
+                max_validation_attempts=1,
+            )
+        except Exception as error:
             result = None
-            notice = "GPT 분석이 10초 안에 완료되지 않아 계산된 KPI 기반 분석을 표시합니다."
-        else:
-            status, value = result_queue.get_nowait()
-            if status == "complete":
-                result = value
-            else:
-                result = None
-                notice = f"GPT 분석을 불러오지 못해 계산된 KPI 기반 분석을 표시합니다. ({value})"
+            notice = (
+                "GPT 분석을 불러오지 못해 계산된 KPI 기반 분석을 표시합니다. "
+                f"({error})"
+            )
 
         try:
             if result is None:
@@ -1068,42 +1046,23 @@ def start_async_gpt_analysis(
 
 
 def run_gpt_analysis_with_timeout(payload: dict) -> tuple[list[dict], list[dict], str]:
-    """서버리스 요청 안에서 GPT를 최대 10초 기다리고 항상 분석 카드를 반환한다."""
+    """페이지 표시 후 시작된 서버리스 요청에서 GPT 분석 카드를 생성한다."""
     gpt_started_at = time.monotonic()
-    result_queue: queue.Queue = queue.Queue(maxsize=1)
-
-    def request_gpt() -> None:
-        try:
-            result_queue.put(
-                (
-                    "complete",
-                    analyze_kpis(
-                        payload,
-                        PROJECT_ROOT,
-                        timeout=GPT_WEB_TIMEOUT_SECONDS - 0.5,
-                        max_retries=0,
-                        max_validation_attempts=1,
-                    ),
-                )
-            )
-        except Exception as error:
-            result_queue.put(("failed", error))
-
-    request_thread = threading.Thread(target=request_gpt, daemon=True)
-    request_thread.start()
-    request_thread.join(GPT_WEB_TIMEOUT_SECONDS)
-
     notice = ""
-    if request_thread.is_alive():
+    try:
+        result = analyze_kpis(
+            payload,
+            PROJECT_ROOT,
+            timeout=GPT_BACKGROUND_TIMEOUT_SECONDS,
+            max_retries=0,
+            max_validation_attempts=1,
+        )
+    except Exception as error:
         result = build_fallback_insights(payload)
-        notice = "GPT 분석이 10초 안에 완료되지 않아 계산된 KPI 기반 분석을 표시합니다."
-    else:
-        status, value = result_queue.get_nowait()
-        if status == "complete":
-            result = value
-        else:
-            result = build_fallback_insights(payload)
-            notice = f"GPT 분석을 불러오지 못해 계산된 KPI 기반 분석을 표시합니다. ({value})"
+        notice = (
+            "GPT 분석을 불러오지 못해 계산된 KPI 기반 분석을 표시합니다. "
+            f"({error})"
+        )
 
     insight_cards, comparison_cards = build_gpt_cards(
         result.get("analyses", []),

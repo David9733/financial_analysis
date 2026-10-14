@@ -18,6 +18,7 @@ from src.app import (
     build_chart_url,
     build_stock_chart_items,
     format_kpi_metric,
+    run_gpt_analysis_with_timeout,
     start_async_gpt_analysis,
 )
 from src.financial_analysis import FINAL_COLUMNS
@@ -278,6 +279,8 @@ class AppStockIntegrationTests(unittest.TestCase):
         self.assertIn('id="tab-financial" aria-controls="panel-financial" aria-selected="true"', html)
         self.assertIn('id="panel-summary" class="tab-panel" role="tabpanel" aria-labelledby="tab-summary" data-panel="summary" hidden', html)
         self.assertIn("GPT 기업 분석을 생성하고 있습니다.", html)
+        self.assertIn("완료되면 자동으로 표시합니다.", html)
+        self.assertNotIn("최대 10초", html)
         self.assertIn(f'data-gpt-status-url="/gpt-analysis/{run_id}"', html)
         self.assertFalse(run_analysis.call_args.kwargs["include_gpt"])
         start_gpt.assert_called_once()
@@ -386,8 +389,23 @@ class AppStockIntegrationTests(unittest.TestCase):
             payload = response.get_json()
             self.assertEqual(payload["status"], "complete")
             self.assertIn("한줄 핵심 요약", payload["html"])
+            self.assertGreater(analyze_kpis.call_args.kwargs["timeout"], 10)
         finally:
             GPT_RUNS.pop(run_id, None)
+
+    @patch("src.app.analyze_kpis")
+    def test_stateless_gpt_request_uses_background_timeout(self, analyze_kpis):
+        result = self.fake_result()
+        analyze_kpis.return_value = {
+            "analyses": result.gpt_insights,
+            "comparisons": result.gpt_comparisons,
+        }
+
+        insight_cards, _, notice = run_gpt_analysis_with_timeout(result.kpi_payload)
+
+        self.assertTrue(insight_cards)
+        self.assertEqual(notice, "")
+        self.assertGreater(analyze_kpis.call_args.kwargs["timeout"], 10)
 
     def test_requested_financial_and_market_kpis_have_help_text(self):
         requested = {
