@@ -4,6 +4,10 @@
 
 기업명만 입력하면 재무제표, 주가, 환율과 금리를 거래일 기준으로 묶어 분석하는 기업 재무 및 매크로 분석 서비스
 
+> **문제** 재무제표만으로는 환율과 금리가 움직일 때 이 기업 주가가 시장보다 더 흔들렸는지 알 수 없고, 4개 출처 데이터를 직접 맞추기 번거롭습니다.<br>
+> **해결** 데이터를 거래일 기준으로 병합하고, 업종별 KPI, 시장 효과를 뺀 매크로 레이더와 금리 상승·원화 약세 시나리오를 자동 계산합니다.<br>
+> **신뢰성** 계산할 수 없는 값은 추정하지 않고 사유를 표시하며, GPT 문장은 근거 KPI와 숫자를 Python으로 검증합니다. 테스트 201개.
+
 **목차**: [개요](#-프로젝트-개요) | [목적](#-프로젝트-목적) | [기술 스택](#️-기술-스택-및-선택-이유) | [핵심 성과](#-핵심-성과) | [파이프라인](#-분석-파이프라인) | [분석 설계](#-분석-설계와-의사결정) | [데이터 품질](#-데이터-품질-관리) | [LLM 활용](#-llm-활용-방식) | [트러블슈팅](#-트러블슈팅) | [빠른 시작](#-빠른-시작) | [사용 방법](#-사용-방법) | [한계](#️-한계와-향후-개선)
 ---
 
@@ -49,7 +53,7 @@ https://github.com/user-attachments/assets/fd538833-aba5-4605-85de-0af79b1dd0b6
 
 | 기술 | 버전 | 선택 이유 |
 |------|------|-----------|
-| **Python** | 3.10+ | API 수집, 분석과 웹 서버를 한 언어로 구성<br>표준 `urllib`로 4개 공공 API를 호출해 별도 HTTP 의존성 없이 운영 |
+| **Python** | 3.10+ | API 수집, 분석과 웹 서버를 한 언어로 구성<br>표준 `urllib`로 공공 API 3개(DART, 공공데이터포털, ECOS)와 비공식 공개 응답 1개(투자자 동향)를 호출해 별도 HTTP 의존성 없이 운영 |
 | **Pandas** | 2.3.3 | `merge_asof`로 거래일 기준 병합 시 직전 관측값만 사용해 미래 값 혼입 방지<br>`groupby`와 `shift`로 기업별 연속 연도 성장률과 평균자본 계산, `rolling().corr()`로 이동상관 계산 |
 | **NumPy** | 2.2.6 | `np.select`로 기업별 업종(일반, 금융, 보험)을 벡터 연산으로 판별<br>`np.polyfit`으로 환율 변화율과 금리 변화폭 산점도의 추세선 기울기 계산 |
 | **Matplotlib** | 3.10.9 | 서버에서 Agg 백엔드로 PNG 차트를 생성해 CSV와 함께 파일로 제공<br>koreanize-matplotlib 0.1.1로 배포 환경의 한글 폰트 깨짐 방지 |
@@ -75,7 +79,7 @@ https://github.com/user-attachments/assets/fd538833-aba5-4605-85de-0af79b1dd0b6
 - **고정 기준 5축 스타 점수**: 성장성, 수익성, 재무 안정성, 효율성과 시장흐름을 최신 KPI와 최근 3개년 추세로 0점에서 100점까지 요약
 - **데이터 품질 관리**: 결측 보간, 소수점 및 단위 오류 보정과 IQR 이상치 표시 내역을 `data_quality_log.csv`로 추적
 - **검증된 LLM 해석**: GPT가 쓴 문장의 근거 KPI, 숫자와 금지 표현을 Python으로 검증하고 실패 시 KPI 기반 대체 인사이트 제공
-- **재현 가능성**: 외부 API를 가짜 응답으로 대체한 테스트 191개와 하위 테스트 18개, 고정 버전 `requirements.lock`
+- **재현 가능성**: 외부 API를 가짜 응답으로 대체한 테스트 201개, 고정 버전 `requirements.lock`
 
 ## 🔄 분석 파이프라인
 
@@ -253,6 +257,7 @@ cp .env.example .env        # Windows PowerShell: Copy-Item .env.example .env
 | `OPENAI_API_KEY` | 선택 | KPI 기반 대체 인사이트 표시 |
 | `OPENAI_MODEL` | 선택 | 기본값 `gpt-4o-mini` |
 | `GPT_BACKGROUND_TIMEOUT_SECONDS` | 선택 | GPT 백그라운드 요청 제한 기본값 240초 적용 |
+| `GPT_REQUEST_SECRET` | 선택 (Vercel 권장) | Vercel GPT 요청 서명 키를 `OPENAI_API_KEY`에서 파생 |
 
 `DART_API_KEY`, `STOCK_API_KEY` 및 `GPT_KEY`도 각각 `DART_KEY`, `PUBLIC_STOCK_API_KEY` 및 `OPENAI_API_KEY`의 호환 이름으로 인식합니다. 시스템 환경 변수와 `.env`에 같은 키가 있으면 시스템 환경 변수를 우선합니다. API 키 발급처와 데이터별 상세 설정은 [기술 및 운영 가이드](docs/technical-guide.md#1-api-키)를 참고하세요.
 
@@ -282,7 +287,7 @@ uv run --python 3.10 --isolated --with-requirements requirements.lock src/app.py
 python -m unittest discover -s tests
 ```
 
-테스트 191개와 하위 테스트 18개는 외부 API를 가짜 응답으로 대체하므로 네트워크와 API 키 없이 실행됩니다. `uv` 환경에서는 다음 명령으로 별도 가상환경 설정 없이 실행할 수 있습니다.
+테스트 201개는 외부 API를 가짜 응답으로 대체하므로 네트워크와 API 키 없이 실행됩니다. `uv` 환경에서는 다음 명령으로 별도 가상환경 설정 없이 실행할 수 있습니다.
 
 ```bash
 uv run --python 3.10 --isolated --with-requirements requirements.lock --with pytest -m pytest -q
