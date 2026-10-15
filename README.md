@@ -37,7 +37,8 @@
 **1개 기업 분석** · 삼성전자 · 재무제표 3년 · 주가 1년<br>
 기업명 오타를 입력하면 비슷한 후보를 안내하고 분석을 막는 장면을 포함합니다.
 
-<img width="904" height="480" alt="삼성전자, SK하이닉스, 현대자동차 비교 분석 시연" src="https://github.com/user-attachments/assets/2288f8f2-47c5-47d2-bd1b-4541f23d02eb" />
+<img width="1012" height="480" alt="202610151555 (2)" src="https://github.com/user-attachments/assets/b96eb15e-2c08-4d3a-b1ff-80bb437ff2f8" />
+
 
 **2개 이상 기업 비교** · 삼성전자, SK하이닉스, 현대자동차 · 재무제표 3년 · 주가 1년
 
