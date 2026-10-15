@@ -66,6 +66,7 @@ uv run --python 3.10 --isolated --with-requirements requirements.lock src/app.py
 
 | 항목 | 로컬 실행 | Vercel |
 |---|---|---|
+| 실행 지역 | 로컬 PC | 서울(`icn1`), `vercel.json`의 `regions`로 지정 |
 | 결과 저장 위치 | 프로젝트 루트의 `output/` | `/tmp/financial_analysis/output/` |
 | 차트 전달 | `/results/<run_id>/…` 파일 경로 | HTML에 이미지 직접 삽입. 차트 합계가 2.2MB를 넘으면 너비 1,200px, 품질 78의 WebP로 압축 |
 | GPT 분석 | 서버 백그라운드 스레드에서 실행하고 브라우저가 상태를 조회 | 브라우저가 압축된 KPI JSON을 `/gpt-analysis/<run_id>`에 POST해 한 요청 안에서 실행 |
