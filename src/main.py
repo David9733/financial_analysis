@@ -502,8 +502,12 @@ def _query_years(
     start_year: int | None,
     end_year: int | None,
     number_of_years: int,
+    on_year_checked: Callable[[int, float], None] | None = None,
 ) -> list[tuple[int, list[dict], str]]:
-    """명시 기간 또는 최근 공시 연도를 조회한다."""
+    """명시 기간 또는 최근 공시 연도를 조회한다.
+
+    ``on_year_checked``는 연도 하나를 확인할 때마다 (연도, 0~1 진행 비율)로 호출된다.
+    """
     logger = logging.getLogger(__name__)
     collected = []
 
@@ -551,6 +555,8 @@ def _query_years(
     year_iterator = iter(candidate_years)
     exhausted = False
     futures: dict[Future, int] = {}
+    expected_count = required_count or len(candidate_years)
+    checked_count = 0
 
     with ThreadPoolExecutor(max_workers=3, thread_name_prefix="dart-year") as executor:
         while not exhausted or futures:
@@ -578,6 +584,10 @@ def _query_years(
                 if year != scheduled_year:
                     raise RuntimeError("DART 연도별 조회 결과의 연도가 일치하지 않습니다.")
                 collect_response(year, response)
+                checked_count += 1
+                if on_year_checked is not None:
+                    # 보고서가 없는 해를 건너뛰면 예상보다 많이 조회하므로 1을 넘지 않게 한다.
+                    on_year_checked(year, min(checked_count / expected_count, 1.0))
 
     return sorted(collected, key=lambda item: item[0])
 
@@ -657,14 +667,26 @@ def run_analysis(
         len(companies),
     )
 
+    company_span = 32 / max(len(companies), 1)
     for index, (input_name, company) in enumerate(resolved_inputs):
-        progress = 8 + int(index / max(len(companies), 1) * 32)
+        company_start = 8 + index * company_span
         _notify_progress(
             progress_callback,
             "financial",
-            progress,
+            int(company_start),
             f"{input_name} 재무제표를 수집하고 있습니다.",
         )
+
+        def report_year(year: int, fraction: float) -> None:
+            # 기업 하나가 연도 여러 개를 조회하는 동안에도 진행률이 오르게 한다.
+            _notify_progress(
+                progress_callback,
+                "financial",
+                int(company_start + company_span * fraction),
+                # 연도는 병렬로 끝나 순서가 섞이고 보고서가 없는 해도 있으므로 조회 완료만 알린다.
+                f"{input_name} 사업보고서를 연도별로 확인하고 있습니다. ({year}년 조회 완료)",
+            )
+
         company_name = company["corp_name"]
         dart_started_at = time.monotonic()
         yearly_data = _query_years(
@@ -674,6 +696,7 @@ def run_analysis(
             start_year,
             end_year,
             number_of_years,
+            on_year_checked=report_year,
         )
         LOGGER.info(
             "performance stage=dart_financial company=%s duration_seconds=%.3f collected_years=%d",

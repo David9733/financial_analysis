@@ -469,6 +469,30 @@ class KPIAnalysisTests(unittest.TestCase):
         self.assertEqual(len(collected), 4)
         self.assertEqual(client.get_annual_financials.call_count, 5)
 
+    def test_year_queries_report_progress_for_each_checked_year(self):
+        client = Mock()
+        client.get_annual_financials.side_effect = [
+            ([], "CFS"),
+            *[([{"account_id": str(index)}], "CFS") for index in range(4)],
+        ]
+        reports = []
+
+        _query_years(
+            client,
+            "001",
+            "테스트전자",
+            None,
+            None,
+            1,
+            on_year_checked=lambda year, fraction: reports.append(fraction),
+        )
+
+        # 빈 연도까지 5번 확인하지만 필요한 4개 기준이라 비율은 1을 넘지 않는다.
+        self.assertEqual(len(reports), 5)
+        self.assertEqual(reports, sorted(reports))
+        self.assertEqual(reports[-1], 1.0)
+        self.assertTrue(all(0 < fraction <= 1 for fraction in reports))
+
     def test_year_queries_run_with_at_most_three_workers(self):
         class ConcurrentClient:
             def __init__(self):

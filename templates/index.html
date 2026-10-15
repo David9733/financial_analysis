@@ -221,10 +221,10 @@
       renderProgress({stage: 'financial', percent: 3, message: '분석 요청을 전송하고 있습니다.'});
       submitStatus.scrollIntoView({behavior: 'smooth', block: 'nearest'});
 
-      // Vercel처럼 진행 조회가 분석 요청과 다른 서버로 가면 계속 waiting만 받는다.
-      // 실제 진행률을 한 번도 받지 못했을 때만 경과 시간으로 예상 진행률을 보여 준다.
+      // Vercel처럼 진행 조회가 분석 요청과 다른 서버로 가면 waiting을 받는다.
+      // 가끔 같은 서버에 닿아 실제 값을 받은 뒤에도 waiting이 오면 예상 진행률로 계속 올린다.
+      // renderProgress는 낮아지는 값을 무시하므로 실제 값이 더 높으면 실제 값이 유지된다.
       const submittedAt = Date.now();
-      let receivedServerProgress = false;
       const estimatedStageMessages = {
         financial: 'DART 재무제표를 수집하고 있습니다.',
         market: '주가와 투자자 동향을 수집하고 있습니다.',
@@ -242,9 +242,8 @@
           if (!response.ok) return;
           const progress = await response.json();
           if (progress.stage !== 'waiting') {
-            receivedServerProgress = true;
             renderProgress(progress);
-          } else if (!receivedServerProgress && Date.now() - submittedAt > 2500) {
+          } else if (Date.now() - submittedAt > 2500) {
             renderProgress(estimatedProgress());
           }
         } catch (_) {
