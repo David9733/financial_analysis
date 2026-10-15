@@ -2,8 +2,6 @@
 
 # 📈 FINANCIAL LAB
 
-[![tests](https://github.com/David9733/financial_analysis/actions/workflows/tests.yml/badge.svg)](https://github.com/David9733/financial_analysis/actions/workflows/tests.yml)
-
 기업명만 입력하면 재무제표, 주가, 환율과 금리를 거래일 기준으로 묶어 분석하는 기업 재무 및 매크로 분석 서비스
 
 > **문제** 재무제표만으로는 환율과 금리가 움직일 때 이 기업 주가가 시장보다 더 흔들렸는지 알 수 없고, 4개 출처 데이터를 직접 맞추기 번거롭습니다.<br>
@@ -104,7 +102,7 @@
 - **고정 기준 5축 스타 점수**: 성장성, 수익성, 재무 안정성, 효율성과 시장흐름을 최신 KPI와 최근 3개년 추세로 0점에서 100점까지 요약
 - **데이터 품질 관리**: 결측 보간, 소수점 및 단위 오류 보정과 IQR 이상치 표시 내역을 `data_quality_log.csv`로 추적
 - **검증된 LLM 해석**: GPT가 쓴 문장의 근거 KPI, 숫자와 금지 표현을 Python으로 검증하고 실패 시 KPI 기반 대체 인사이트 제공
-- **재현 가능성**: 외부 API를 가짜 응답으로 대체한 테스트 206개를 GitHub Actions에서 자동 실행, 고정 버전 `requirements.lock`
+- **재현 가능성**: 외부 API를 가짜 응답으로 대체한 테스트 206개, 고정 버전 `requirements.lock`
 
 ## 🔄 분석 파이프라인
 
