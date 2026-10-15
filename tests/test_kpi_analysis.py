@@ -15,7 +15,7 @@ from src.financial_analysis import (
     format_result_for_csv,
     select_output_periods,
 )
-from src.app import format_kpi_metric
+from src.app import build_financial_kpi_matrix, format_kpi_metric
 from src.kpi_analysis import _financial_trends, build_kpi_payload
 from src.dart_api import CompanyNotFoundError
 from src.main import _query_years, _resolve_company_inputs
@@ -196,6 +196,49 @@ class KPIAnalysisTests(unittest.TestCase):
         self.assertEqual(trend["operating_profit_growth"]["periods"], ["2023", "2024", "2025"])
         # 매출 900 → 1100 → 1000은 오르내림이 섞여 변동이다.
         self.assertEqual(trend["revenue_growth"]["value"], "변동")
+        # 2024년 성장률이 흑자전환으로 비어 있어 성장 속도를 비교하지 않는다.
+        self.assertFalse(trend["operating_profit_growth"]["slowdown"])
+
+    def test_growth_trend_marks_slowdown_when_amount_rises_more_slowly(self):
+        def record(year, key, amount):
+            return self.raw_record("테스트둔화", year, key, amount)
+
+        # 영업이익은 3년 연속 늘지만 성장률은 25% → 6.4%로 낮아지고,
+        # 매출은 성장률이 10% → 20%로 높아진다(KB금융 영업이익과 같은 형태).
+        records = []
+        for year, revenue, operating_profit in (
+            (2022, 1000, 80),
+            (2023, 1100, 100),
+            (2024, 1210, 125),
+            (2025, 1452, 133),
+        ):
+            records += [
+                record(year, "revenue", revenue),
+                record(year, "operating_profit", operating_profit),
+                record(year, "net_income", operating_profit),
+                record(year, "assets", 2000),
+                record(year, "liabilities", 1000),
+                record(year, "equity", 1000),
+            ]
+        metrics = calculate_metrics(pd.DataFrame(records, columns=RAW_COLUMNS))
+        payload = build_kpi_payload(
+            select_output_periods(metrics, number_of_years=1),
+            pd.DataFrame(),
+            "1y",
+            financial_trend_source=metrics,
+        )
+        trend = payload["companies"][0]["financial_trend"]
+
+        self.assertEqual(trend["operating_profit_growth"]["value"], "개선")
+        self.assertTrue(trend["operating_profit_growth"]["slowdown"])
+        self.assertEqual(trend["revenue_growth"]["value"], "개선")
+        self.assertFalse(trend["revenue_growth"]["slowdown"])
+
+        matrix = build_financial_kpi_matrix(payload)
+        rows = {row["key"]: row for row in matrix["rows"]}
+        self.assertEqual(rows["operating_profit_growth"]["badges"], ["개선 · 둔화"])
+        self.assertEqual(rows["operating_profit_growth"]["badge_tones"], ["improving"])
+        self.assertEqual(rows["revenue_growth"]["badges"], ["개선"])
         self.assertIsNone(_growth(50, -100))
         self.assertIsNone(_growth(50, 0))
         self.assertAlmostEqual(_growth(150, 100), 50.0)

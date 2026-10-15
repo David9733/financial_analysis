@@ -141,12 +141,13 @@ LOWER_IS_BETTER_FINANCIAL_KPIS = {
     "debt_ratio",
     "accounts_receivable_days",
 }
-# 성장률 KPI의 3년 추세는 성장률 값 대신 이 원천 금액의 흐름으로 판정한다.
+# 성장률 KPI의 3년 추세는 성장률 값 대신 원천 금액의 흐름으로 판정한다.
+# (금액 열, 성장률 열) — 성장률 열은 금액이 늘었지만 성장 속도가 줄었는지 확인하는 데 쓴다.
 GROWTH_TREND_AMOUNT_COLUMNS = {
-    "revenue_growth": "매출",
-    "operating_profit_growth": "영업이익",
-    "net_income_growth": "당기순이익",
-    "insurance_revenue_growth": "보험서비스수익",
+    "revenue_growth": ("매출", "매출성장"),
+    "operating_profit_growth": ("영업이익", "영업이익성장"),
+    "net_income_growth": ("당기순이익", "당기순이익성장"),
+    "insurance_revenue_growth": ("보험서비스수익", "보험서비스수익성장"),
 }
 
 
@@ -210,8 +211,14 @@ def _is_consecutive(periods: list[int]) -> bool:
     return len(periods) == 3 and periods[1] - periods[0] == 1 and periods[2] - periods[1] == 1
 
 
-def _amount_trend(amount_rows: pd.DataFrame, column: str) -> dict[str, Any] | None:
-    """성장률 KPI의 추세를 원천 금액의 최근 3개 연속 사업연도 흐름으로 판정한다."""
+def _amount_trend(
+    amount_rows: pd.DataFrame, column: str, growth_column: str | None = None
+) -> dict[str, Any] | None:
+    """성장률 KPI의 추세를 원천 금액의 최근 3개 연속 사업연도 흐름으로 판정한다.
+
+    금액이 개선 흐름이어도 최근 연도 성장률이 직전 연도보다 낮으면 ``slowdown``을 표시한다.
+    흑자전환처럼 성장률이 비어 있는 해가 끼면 속도를 비교할 수 없어 표시하지 않는다.
+    """
     if column not in amount_rows or "연도" not in amount_rows:
         return None
     recent = amount_rows.sort_values("연도").tail(3)
@@ -220,14 +227,20 @@ def _amount_trend(amount_rows: pd.DataFrame, column: str) -> dict[str, Any] | No
     if not _is_consecutive(periods) or amounts.isna().any():
         return None
     values = [float(value) for value in amounts]
+    judgement = _trend_judgement(values)
+    slowdown = False
+    if judgement == "개선" and growth_column and growth_column in recent:
+        rates = pd.to_numeric(recent[growth_column], errors="coerce").tail(2)
+        slowdown = bool(rates.notna().all() and rates.iloc[-1] < rates.iloc[0])
     return {
-        "value": _trend_judgement(values),
+        "value": judgement,
         "unit": "",
         "status": "available",
         "reason": None,
         "periods": [str(period) for period in periods],
         "values": values,
         "basis": column,
+        "slowdown": slowdown,
     }
 
 
@@ -255,9 +268,9 @@ def _financial_trends(
             }
             continue
 
-        amount_column = GROWTH_TREND_AMOUNT_COLUMNS.get(key)
-        if amount_column and amount_rows is not None and not amount_rows.empty:
-            amount_trend = _amount_trend(amount_rows, amount_column)
+        amount_columns = GROWTH_TREND_AMOUNT_COLUMNS.get(key)
+        if amount_columns and amount_rows is not None and not amount_rows.empty:
+            amount_trend = _amount_trend(amount_rows, *amount_columns)
             if amount_trend is not None:
                 result[key] = amount_trend
                 continue

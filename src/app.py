@@ -799,7 +799,8 @@ def build_financial_kpi_matrix(payload: dict) -> dict:
                 badge = trend.get("value") or ""
             else:
                 badge = ""
-            badges.append(badge or "")
+            # 색은 판정값으로 정하고, 금액은 늘었지만 성장률이 낮아진 경우만 글자로 덧붙인다.
+            badges.append(f"{badge} · 둔화" if badge and trend.get("slowdown") else badge)
             tones.append(
                 {
                     "개선": "improving",

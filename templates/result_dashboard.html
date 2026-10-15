@@ -206,7 +206,7 @@
 
     <section id="panel-financial" class="tab-panel" role="tabpanel" aria-labelledby="tab-financial" data-panel="financial">
       <div class="section-heading"><div><p class="eyebrow">FINANCIALS</p><h2>재무 분석</h2></div><span>연간 사업보고서 기준</span></div>
-      {{ render_matrix('전체 재무 KPI 비교', financial_kpi_matrix, '배지는 최근 3개 연속 사업연도의 흐름을 개선, 악화, 보합, 변동으로 요약하며, 오른쪽 수치는 최신 연도 값입니다. 성장률 배지는 매출, 이익 등 금액의 흐름 기준입니다.') }}
+      {{ render_matrix('전체 재무 KPI 비교', financial_kpi_matrix, '배지는 최근 3개 연속 사업연도의 흐름을 개선, 악화, 보합, 변동으로 요약하며, 오른쪽 수치는 최신 연도 값입니다. 성장률 배지는 매출, 이익 등 금액의 흐름 기준이며, 금액은 늘었지만 최근 성장률이 전년보다 낮으면 둔화를 함께 표시합니다.') }}
       {% if chart_urls %}<div class="chart-grid result-chart-grid">{% for chart_url in chart_urls %}<article class="chart-card"><img src="{{ chart_url }}" alt="재무분석 차트 {{ loop.index }}" loading="lazy"></article>{% endfor %}</div>{% endif %}
     </section>
 
