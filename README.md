@@ -228,8 +228,8 @@ cp .env.example .env        # Windows PowerShell: Copy-Item .env.example .env
 `.env`에는 `DART_KEY`가 필수이며 다른 키는 선택입니다. 설정은 [기술 및 운영 가이드](docs/technical-guide.md#1-api-키)를 참고하세요.
 
 ```bash
-uv run --python 3.10 --isolated --with-requirements requirements.lock src/app.py   # 웹 앱 (http://127.0.0.1:5000)
-python -m unittest discover -s tests                                                # 테스트 (API 키 불필요)
+uv run --python 3.10 --isolated --with-requirements requirements.lock src/app.py   
+python -m unittest discover -s tests                                                
 ```
 
 `uv` 없이 설치하는 방법과 CLI 사용법은 [기술 및 운영 가이드](docs/technical-guide.md#2-실행)에 있습니다.
