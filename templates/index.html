@@ -221,10 +221,32 @@
       renderProgress({stage: 'financial', percent: 3, message: '분석 요청을 전송하고 있습니다.'});
       submitStatus.scrollIntoView({behavior: 'smooth', block: 'nearest'});
 
+      // Vercel처럼 진행 조회가 분석 요청과 다른 서버로 가면 계속 waiting만 받는다.
+      // 실제 진행률을 한 번도 받지 못했을 때만 경과 시간으로 예상 진행률을 보여 준다.
+      const submittedAt = Date.now();
+      let receivedServerProgress = false;
+      const estimatedStageMessages = {
+        financial: 'DART 재무제표를 수집하고 있습니다.',
+        market: '주가와 투자자 동향을 수집하고 있습니다.',
+        macro: '환율과 금리를 수집하고 있습니다.',
+      };
+      const estimatedProgress = () => {
+        const seconds = (Date.now() - submittedAt) / 1000;
+        const percent = Math.min(90, Math.round(3 + 87 * (1 - Math.exp(-seconds / 40))));
+        const stage = percent < 42 ? 'financial' : percent < 69 ? 'market' : 'macro';
+        return {stage, percent, message: `${estimatedStageMessages[stage]} (예상 진행률)`};
+      };
       const pollProgress = async () => {
         try {
           const response = await fetch(`/analysis-progress/${runId}`, {cache: 'no-store'});
-          if (response.ok) renderProgress(await response.json());
+          if (!response.ok) return;
+          const progress = await response.json();
+          if (progress.stage !== 'waiting') {
+            receivedServerProgress = true;
+            renderProgress(progress);
+          } else if (!receivedServerProgress && Date.now() - submittedAt > 2500) {
+            renderProgress(estimatedProgress());
+          }
         } catch (_) {
           // 본 분석 요청은 계속 진행되므로 일시적인 진행 조회 실패는 무시한다.
         }

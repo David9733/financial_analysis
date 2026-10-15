@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import hmac
 import json
 import logging
 import os
 import re
+import secrets
 import shutil
 import threading
 import time
@@ -21,7 +24,7 @@ from PIL import Image
 
 if __package__:  # ``python -m src.app`` 또는 패키지 import
     from .correlation_insight import build_company_correlation_insights
-    from .dart_api import CompanyNotFoundError, DartAPIError
+    from .dart_api import CompanyNotFoundError, DartAPIError, load_env_file
     from .financial_analysis import FINAL_COLUMNS, format_result_for_csv
     from .gpt_analysis import GPTAnalysisError, analyze_kpis, build_fallback_insights
     from .main import (
@@ -32,7 +35,7 @@ if __package__:  # ``python -m src.app`` 또는 패키지 import
     )
 else:  # ``python src/app.py``로 직접 실행
     from correlation_insight import build_company_correlation_insights
-    from dart_api import CompanyNotFoundError, DartAPIError
+    from dart_api import CompanyNotFoundError, DartAPIError, load_env_file
     from financial_analysis import FINAL_COLUMNS, format_result_for_csv
     from gpt_analysis import GPTAnalysisError, analyze_kpis, build_fallback_insights
     from main import (
@@ -56,6 +59,11 @@ VERCEL_INLINE_CHART_QUALITY = 78
 VERCEL_INLINE_PNG_BUDGET_BYTES = 2_200_000
 GPT_REQUEST_COMPRESSED_LIMIT_BYTES = 1_000_000
 GPT_REQUEST_DECOMPRESSED_LIMIT_BYTES = 4_000_000
+# base64(약 4/3배)와 서명 등 JSON 필드를 더한 POST 본문 한도
+GPT_REQUEST_BODY_LIMIT_BYTES = GPT_REQUEST_COMPRESSED_LIMIT_BYTES * 2
+# 결과 화면이 열린 직후 브라우저가 보내므로, 백그라운드 제한(기본 240초)보다 넉넉하게 둔다.
+GPT_REQUEST_TTL_SECONDS = 15 * 60
+_PROCESS_GPT_REQUEST_SECRET = secrets.token_bytes(32)
 STOCK_PERIOD_LABELS = {
     "1m": "1개월",
     "3m": "3개월",
@@ -161,23 +169,29 @@ KPI_HELP_TEXT = {
     ),
     "operating_profit_growth": (
         "전년 영업이익 대비 당해 영업이익의 증감률입니다. 계산식은 "
-        "(당해 영업이익 ÷ 전년 영업이익 - 1) × 100입니다."
+        "(당해 영업이익 ÷ 전년 영업이익 - 1) × 100입니다. 전년이 적자(0 이하)면 "
+        "부호가 뒤집히므로 수치 대신 흑자전환 또는 적자지속으로 표시합니다."
     ),
     "net_income_growth": (
         "전년 당기순이익 대비 당해 당기순이익의 증감률입니다. 계산식은 "
-        "(당해 순이익 ÷ 전년 순이익 - 1) × 100입니다."
+        "(당해 순이익 ÷ 전년 순이익 - 1) × 100입니다. 전년이 적자(0 이하)면 "
+        "부호가 뒤집히므로 수치 대신 흑자전환 또는 적자지속으로 표시합니다."
     ),
     "operating_margin": "매출 중 영업이익이 차지하는 비율로, 영업이익 ÷ 매출 × 100입니다.",
     "net_margin": "매출 중 당기순이익이 차지하는 비율로, 당기순이익 ÷ 매출 × 100입니다.",
     "roe": (
         "자기자본으로 당기순이익을 얼마나 냈는지 나타냅니다. "
-        "당기순이익 ÷ 전년과 당년 평균자본 × 100입니다."
+        "당기순이익 ÷ 전년과 당년 평균자본 × 100입니다. 평균자본이 0 이하이면 "
+        "자본잠식으로 표시합니다."
     ),
     "roa": (
         "총자산으로 당기순이익을 얼마나 냈는지 나타냅니다. "
         "당기순이익 ÷ 전년과 당년 평균자산 × 100입니다."
     ),
-    "debt_ratio": "자기자본 대비 부채 비율로, 부채총계 ÷ 자본총계 × 100입니다.",
+    "debt_ratio": (
+        "자기자본 대비 부채 비율로, 부채총계 ÷ 자본총계 × 100입니다. 자본총계가 0 이하이면 "
+        "비율이 음수가 되어 오히려 낮아 보이므로 수치 대신 자본잠식으로 표시합니다."
+    ),
     "interest_coverage_ratio": (
         "영업이익으로 실제 지급한 이자를 감당하는 정도입니다. "
         "영업이익 ÷ 현금흐름표상 이자지급액이며 단위는 배입니다."
@@ -519,6 +533,9 @@ def format_kpi_metric(metric: dict) -> str:
             "no_comparison_period": "-",
             "neutral_direction": "방향성 없음",
         }
+        if metric.get("status") == "negative_base" and metric.get("reason"):
+            # 전년 적자로 성장률 대신 흑자전환, 적자지속 등을 표시한다.
+            return str(metric["reason"])
         return status_labels.get(metric.get("status"), "확인 불가")
     value = metric["value"]
     unit = metric.get("unit", "")
@@ -619,7 +636,9 @@ STAR_AXIS_FORMULAS = {
         "보험업": "보험서비스마진 40% + ROE 30% + ROA 30%",
     },
     "stability": {
-        "일반기업": "부채비율 50%(낮을수록 높은 점수) + 이자보상배율 50%",
+        "일반기업": (
+            "부채비율 50%(낮을수록 높은 점수, 자본잠식은 0점) + 이자보상배율 50%"
+        ),
         "금융업": "자기자본비중(자본총계 ÷ 총자산) 60% + 최근 3년 흑자 지속 40%",
         "보험업": "자기자본비중(자본총계 ÷ 총자산) 60% + 최근 3년 흑자 지속 40%",
     },
@@ -1031,6 +1050,12 @@ def start_async_gpt_analysis(
                 f"({error})"
             )
 
+        # 예상하지 못한 오류에도 브라우저 조회가 끝나도록 실패 상태를 먼저 둔다.
+        state = {
+            "status": "failed",
+            "message": "GPT 기업 분석을 불러오지 못했습니다.",
+            "updated_at": time.time(),
+        }
         try:
             if result is None:
                 result = build_fallback_insights(payload)
@@ -1051,13 +1076,13 @@ def start_async_gpt_analysis(
                 "notice": notice,
                 "updated_at": time.time(),
             }
-        except (GPTAnalysisError, KeyError, TypeError, OSError) as error:
-            LOGGER.warning("async_gpt_analysis_failed run_id=%s error=%s", run_id, error)
-            state = {
-                "status": "failed",
-                "message": "GPT 기업 분석을 불러오지 못했습니다.",
-                "updated_at": time.time(),
-            }
+        except Exception as error:
+            LOGGER.warning(
+                "async_gpt_analysis_failed run_id=%s error=%s",
+                run_id,
+                error,
+                exc_info=True,
+            )
         finally:
             with PROGRESS_LOCK:
                 GPT_RUNS[run_id] = state
@@ -1290,8 +1315,33 @@ def compact_gpt_macro_groups(groups: list[dict]) -> list[dict]:
     ]
 
 
-def encode_gpt_request_data(data: dict) -> dict[str, str]:
-    """서버리스 후속 GPT 요청을 작은 zlib JSON으로 만든다."""
+class GPTRequestRejected(ValueError):
+    """서버가 발급하지 않았거나 만료된 GPT 분석 요청."""
+
+
+def _gpt_request_secret() -> bytes:
+    """서버리스 인스턴스끼리 공유되는 환경 변수로 GPT 요청 서명 키를 만든다."""
+    load_env_file(PROJECT_ROOT / ".env")
+    configured = os.getenv("GPT_REQUEST_SECRET", "").strip()
+    if configured:
+        return configured.encode("utf-8")
+    # 별도 키가 없으면 OpenAI 키에서 한 방향으로 파생해 추가 설정 없이 배포할 수 있게 한다.
+    openai_key = (os.getenv("OPENAI_API_KEY") or os.getenv("GPT_KEY") or "").strip()
+    if openai_key:
+        return hmac.new(
+            openai_key.encode("utf-8"), b"gpt-request-signing", hashlib.sha256
+        ).digest()
+    # OpenAI 키가 없으면 비용이 생기지 않으므로 프로세스 임시 키로 충분하다.
+    return _PROCESS_GPT_REQUEST_SECRET
+
+
+def _gpt_request_signature(run_id: str, expires_at: int, data: str) -> str:
+    message = f"{run_id}.{expires_at}.{data}".encode("utf-8")
+    return hmac.new(_gpt_request_secret(), message, hashlib.sha256).hexdigest()
+
+
+def encode_gpt_request_data(data: dict, run_id: str) -> dict[str, str | int]:
+    """서버리스 후속 GPT 요청을 작은 zlib JSON으로 만들고 이 실행에만 쓰도록 서명한다."""
     raw = json.dumps(
         data, ensure_ascii=False, allow_nan=False, separators=(",", ":")
     ).encode("utf-8")
@@ -1301,19 +1351,41 @@ def encode_gpt_request_data(data: dict) -> dict[str, str]:
         len(raw),
         len(compressed),
     )
+    encoded = base64.b64encode(compressed).decode("ascii")
+    expires_at = int(time.time()) + GPT_REQUEST_TTL_SECONDS
     return {
         "encoding": "zlib-base64",
-        "data": base64.b64encode(compressed).decode("ascii"),
+        "data": encoded,
+        "expires_at": expires_at,
+        "signature": _gpt_request_signature(run_id, expires_at, encoded),
     }
 
 
-def decode_gpt_request_data(body: dict) -> dict:
-    """압축 GPT 요청을 크기 제한 안에서 복원하며 기존 평문 요청도 허용한다."""
+def decode_gpt_request_data(body: dict, run_id: str) -> dict:
+    """서버가 서명한 압축 GPT 요청만 크기 제한 안에서 복원한다.
+
+    서명이 없으면 누구나 임의 KPI를 보내 OpenAI 비용을 쓸 수 있으므로 평문 요청은 거부한다.
+    """
     if body.get("encoding") != "zlib-base64":
-        return body
+        raise GPTRequestRejected("서버가 발급한 GPT 분석 요청만 처리합니다.")
     encoded = body.get("data")
-    if not isinstance(encoded, str):
-        raise ValueError("압축된 GPT 분석 데이터가 올바르지 않습니다.")
+    expires_at = body.get("expires_at")
+    signature = body.get("signature")
+    if (
+        not isinstance(encoded, str)
+        or not isinstance(expires_at, int)
+        or isinstance(expires_at, bool)
+        or not isinstance(signature, str)
+    ):
+        raise GPTRequestRejected("서버가 발급한 GPT 분석 요청만 처리합니다.")
+    if not hmac.compare_digest(
+        signature, _gpt_request_signature(run_id, expires_at, encoded)
+    ):
+        raise GPTRequestRejected("서버가 발급한 GPT 분석 요청만 처리합니다.")
+    if time.time() > expires_at:
+        raise GPTRequestRejected(
+            "GPT 분석 요청 시간이 지났습니다. 분석을 다시 실행해 주세요."
+        )
     try:
         compressed = base64.b64decode(encoded, validate=True)
     except (ValueError, TypeError) as error:
@@ -1606,7 +1678,8 @@ def analyze():
                 {
                     "payload": integrated.kpi_payload,
                     "macro_chart_groups": compact_gpt_macro_groups(macro_chart_groups),
-                }
+                },
+                run_id,
             )
         else:
             gpt_insight_cards, gpt_comparison_cards = [], []
@@ -1734,13 +1807,19 @@ def gpt_analysis_result(run_id: str):
     if not re.fullmatch(r"[0-9a-f]{32}", run_id):
         abort(404)
     if request.method == "POST":
+        # 앱 전체 제한(32KB)은 입력 폼 기준이다. 압축 KPI는 기업이 많으면 이를 넘을 수
+        # 있으므로 이 요청만 base64 압축 한도에 맞춰 제한을 넓힌다.
+        request.max_content_length = GPT_REQUEST_BODY_LIMIT_BYTES
         if (
             request.content_length
-            and request.content_length > GPT_REQUEST_COMPRESSED_LIMIT_BYTES * 2
+            and request.content_length > GPT_REQUEST_BODY_LIMIT_BYTES
         ):
             return jsonify({"status": "failed", "message": "GPT 분석 요청이 너무 큽니다."}), 413
         try:
-            body = decode_gpt_request_data(request.get_json(silent=True) or {})
+            body = decode_gpt_request_data(request.get_json(silent=True) or {}, run_id)
+        except GPTRequestRejected as error:
+            LOGGER.warning("gpt_request_rejected run_id=%s reason=%s", run_id, error)
+            return jsonify({"status": "failed", "message": str(error)}), 403
         except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as error:
             return jsonify({"status": "failed", "message": str(error)}), 400
         payload = body.get("payload")

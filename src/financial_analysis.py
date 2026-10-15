@@ -66,7 +66,11 @@ ACCOUNT_RULES = {
     "interest_paid": {
         "label": "이자지급액",
         "statements": ("CF",),
-        "ids": ("ifrs-full_InterestPaidClassifiedAsOperatingActivities",),
+        # 기업에 따라 영업활동 또는 재무활동 현금흐름으로 분류한다.
+        "ids": (
+            "ifrs-full_InterestPaidClassifiedAsOperatingActivities",
+            "ifrs-full_InterestPaidClassifiedAsFinancingActivities",
+        ),
         "names": ("이자의 지급", "이자지급"),
     },
     "trade_receivables": {
@@ -196,7 +200,15 @@ GROWTH_COLUMNS = [
     "당기순이익성장",
 ]
 
-GENERAL_ONLY_COLUMNS = ["매출", "영업이익률", "부채비율", "이자보상배율", "매출성장", "매출채권회전일수"]
+# 전년 값이 0 이하이면 성장률 부호가 뒤집혀(예: -100 → 50이 -150%) 수치 대신
+# 흑자전환·적자지속 같은 구분을 숨은 열에 남긴다. 화면과 CSV에는 FINAL_COLUMNS만 나간다.
+GROWTH_NOTE_COLUMNS = {column: f"_{column}비고" for column in GROWTH_COLUMNS}
+# 자본이 0 이하(자본잠식)면 부채비율과 ROE의 부호가 뒤집혀 같은 방식으로 구분을 남긴다.
+RATIO_NOTE_COLUMNS = {column: f"_{column}비고" for column in ("부채비율", "ROE")}
+METRIC_NOTE_COLUMNS = {**GROWTH_NOTE_COLUMNS, **RATIO_NOTE_COLUMNS}
+CAPITAL_IMPAIRMENT_NOTE = "자본잠식"
+
+GENERAL_ONLY_COLUMNS =["매출", "영업이익률", "부채비율", "이자보상배율", "매출성장", "매출채권회전일수"]
 FINANCIAL_ONLY_COLUMNS = ["순이자손익", "순수수료손익"]
 INSURANCE_ONLY_COLUMNS = ["보험서비스수익", "보험서비스손익", "보험서비스마진", "보험서비스수익성장", "투자손익"]
 
@@ -382,6 +394,28 @@ def _safe_ratio(numerator: pd.Series, denominator: pd.Series) -> pd.Series:
     return result
 
 
+def _growth_rate(current: pd.Series, previous: pd.Series) -> pd.Series:
+    """전년 값이 양수일 때만 전년 대비 증감률(%)을 계산한다."""
+    return _safe_ratio(current - previous, previous.where(previous.gt(0))) * 100
+
+
+def _growth_note(current: pd.Series, previous: pd.Series) -> pd.Series:
+    """전년 값이 0 이하라 성장률을 계산하지 않은 행의 구분을 반환한다."""
+    note = pd.Series(pd.NA, index=current.index, dtype="object")
+    negative_base = previous.lt(0)
+    note[negative_base & current.gt(0)] = "흑자전환"
+    note[negative_base & current.le(0)] = "적자지속"
+    note[previous.eq(0) & current.notna()] = "전년 값 0"
+    return note
+
+
+def _capital_impairment_note(equity: pd.Series, numerator: pd.Series) -> pd.Series:
+    """자본이 0 이하라 비율을 계산하지 않은 행에 자본잠식을 표시한다."""
+    note = pd.Series(pd.NA, index=equity.index, dtype="object")
+    note[equity.le(0) & numerator.notna()] = CAPITAL_IMPAIRMENT_NOTE
+    return note
+
+
 def _company_analysis_types(values: pd.DataFrame) -> pd.Series:
     """기업 전체 연도의 계정 구성을 바탕으로 일반·금융·보험 유형을 판별한다."""
     # 일반기업도 이자수익·비용 일부를 공시할 수 있으므로, 분리 공시에서
@@ -453,18 +487,45 @@ def calculate_metrics(raw_accounts: pd.DataFrame) -> pd.DataFrame:
     insurance_mask = analysis_type.eq("보험업")
 
     operating_margin = _safe_ratio(values["operating_profit"], values["revenue"]) * 100
-    debt_ratio = _safe_ratio(values["liabilities"], values["equity"]) * 100
-    interest_coverage = _safe_ratio(values["operating_profit"], values["interest_paid"])
-    revenue_growth = _safe_ratio(values["revenue"] - previous_revenue, previous_revenue) * 100
+    positive_equity = values["equity"].where(values["equity"].gt(0))
+    positive_average_equity = average_equity.where(average_equity.gt(0))
+    debt_ratio = _safe_ratio(values["liabilities"], positive_equity) * 100
+    roe = _safe_ratio(values["net_income"], positive_average_equity) * 100
+    ratio_notes = {
+        RATIO_NOTE_COLUMNS["부채비율"]: _capital_impairment_note(
+            values["equity"], values["liabilities"]
+        ).where(general_mask),
+        RATIO_NOTE_COLUMNS["ROE"]: _capital_impairment_note(
+            average_equity, values["net_income"]
+        ),
+    }
+    # 이자지급액을 음수(유출)로 공시하는 경우에도 지급 규모로 계산한다.
+    interest_coverage = _safe_ratio(
+        values["operating_profit"], values["interest_paid"].abs()
+    )
     receivables_days = _safe_ratio(values["trade_receivables"], values["revenue"]) * 365
     insurance_margin = _safe_ratio(values["insurance_service_result"], values["insurance_revenue"]) * 100
-    insurance_revenue_growth = (
-        _safe_ratio(
-            values["insurance_revenue"] - previous_insurance_revenue,
+    growth_sources = {
+        "매출성장": (values["revenue"], previous_revenue, general_mask),
+        "보험서비스수익성장": (
+            values["insurance_revenue"],
             previous_insurance_revenue,
-        )
-        * 100
-    )
+            insurance_mask,
+        ),
+        "총자산성장": (values["assets"], previous_assets, None),
+        "영업이익성장": (values["operating_profit"], previous_operating_profit, None),
+        "당기순이익성장": (values["net_income"], previous_net_income, None),
+    }
+    growth_rates = {}
+    growth_notes = {}
+    for column, (current, previous, mask) in growth_sources.items():
+        rate = _growth_rate(current, previous)
+        note = _growth_note(current, previous)
+        if mask is not None:
+            rate = rate.where(mask)
+            note = note.where(mask)
+        growth_rates[column] = rate
+        growth_notes[GROWTH_NOTE_COLUMNS[column]] = note
 
     result = pd.DataFrame(
         {
@@ -488,22 +549,10 @@ def calculate_metrics(raw_accounts: pd.DataFrame) -> pd.DataFrame:
             # 현금흐름표상 실제 이자지급액 기준이다. 발생주의 이자비용 기준과 다를 수 있다.
             "이자보상배율": interest_coverage.where(general_mask),
             # 평균자본을 사용한다. 기말자본만 쓰는 방식보다 기간 중 자본 변화를 반영한다.
-            "ROE": _safe_ratio(values["net_income"], average_equity) * 100,
+            "ROE": roe,
             # 요청 기간 밖의 직전연도도 내부 수집하므로 1년 조회에서도 평균자산을 계산한다.
             "ROA": _safe_ratio(values["net_income"], average_assets) * 100,
-            "매출성장": revenue_growth.where(general_mask),
-            "보험서비스수익성장": insurance_revenue_growth.where(insurance_mask),
-            "총자산성장": _safe_ratio(values["assets"] - previous_assets, previous_assets) * 100,
-            "영업이익성장": _safe_ratio(
-                values["operating_profit"] - previous_operating_profit,
-                previous_operating_profit,
-            )
-            * 100,
-            "당기순이익성장": _safe_ratio(
-                values["net_income"] - previous_net_income,
-                previous_net_income,
-            )
-            * 100,
+            **growth_rates,
             # 사이트 표시 방식에 맞춰 기말 매출채권 잔액을 사용한다.
             # 별도 매출채권이 없으면 매출채권 및 기타채권 통합 계정을 사용한다.
             "매출채권회전일수": receivables_days.where(general_mask),
@@ -530,7 +579,9 @@ def calculate_metrics(raw_accounts: pd.DataFrame) -> pd.DataFrame:
         if column not in {"기업명", "분석유형", "연도", *amount_columns}
     ]
     result[ratio_columns] = result[ratio_columns].round(2)
-    return result[FINAL_COLUMNS]
+    for column, note in {**growth_notes, **ratio_notes}.items():
+        result[column] = note
+    return result[FINAL_COLUMNS + list(METRIC_NOTE_COLUMNS.values())]
 
 
 def format_result_for_csv(result: pd.DataFrame) -> pd.DataFrame:
@@ -548,6 +599,12 @@ def format_result_for_csv(result: pd.DataFrame) -> pd.DataFrame:
         mask = display["분석유형"].eq(analysis_type)
         display.loc[mask, columns] = f"해당 없음({analysis_type})"
 
+    for column, note_column in METRIC_NOTE_COLUMNS.items():
+        if note_column not in display:
+            continue
+        noted = pd.isna(display[column]) & display[note_column].notna()
+        display.loc[noted, column] = display.loc[noted, note_column]
+
     first_rows = display.groupby("기업명", sort=False).head(1).index
     for column in GROWTH_COLUMNS:
         missing = display.index.isin(first_rows) & pd.isna(display[column])
@@ -557,7 +614,9 @@ def format_result_for_csv(result: pd.DataFrame) -> pd.DataFrame:
     display.loc[missing_roe, "ROE"] = "직전연도 자본 또는 당기순이익 없음"
     missing_roa = pd.isna(display["ROA"])
     display.loc[missing_roa, "ROA"] = "직전연도 자산 또는 당기순이익 없음"
-    display[metric_columns] = display[metric_columns].fillna("원천 데이터 없음")
+    # fillna는 object 열의 자료형 자동 변환 경고를 내므로 열마다 직접 채운다.
+    for column in metric_columns:
+        display.loc[pd.isna(display[column]), column] = "원천 데이터 없음"
     return display[FINAL_COLUMNS]
 
 
@@ -584,4 +643,7 @@ def select_output_periods(
 
     if not selected_parts:
         return pd.DataFrame(columns=FINAL_COLUMNS)
-    return pd.concat(selected_parts, ignore_index=True)[FINAL_COLUMNS]
+    columns = FINAL_COLUMNS + [
+        column for column in METRIC_NOTE_COLUMNS.values() if column in metrics
+    ]
+    return pd.concat(selected_parts, ignore_index=True)[columns]

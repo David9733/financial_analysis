@@ -13,6 +13,7 @@ if __package__:
         SHORT_TERM_CORRELATION_PERIODS,
     )
     from .data_quality import daily_change, pair_valid
+    from .financial_analysis import METRIC_NOTE_COLUMNS
     from .macro_analysis import (
         CREDIT_SPREAD_CHANGE_BP_COLUMN,
         CREDIT_SPREAD_COLUMN,
@@ -42,6 +43,7 @@ else:
         SHORT_TERM_CORRELATION_PERIODS,
     )
     from data_quality import daily_change, pair_valid
+    from financial_analysis import METRIC_NOTE_COLUMNS
     from macro_analysis import (
         CREDIT_SPREAD_CHANGE_BP_COLUMN,
         CREDIT_SPREAD_COLUMN,
@@ -279,6 +281,14 @@ def _financial_kpis(company_rows: pd.DataFrame) -> tuple[int, str, dict[str, dic
     financial_company = analysis_type == "금융업"
     insurance_company = analysis_type == "보험업"
 
+    def noted_metric(column: str, unit: str = "%", **options) -> dict[str, Any]:
+        """분모가 0 이하라 계산하지 않은 값은 흑자전환, 자본잠식 등 구분을 사유로 남긴다."""
+        value = latest.get(column, pd.NA)
+        note = latest.get(METRIC_NOTE_COLUMNS[column])
+        if not options and pd.isna(value) and isinstance(note, str):
+            return _metric(None, unit, status="negative_base", reason=note)
+        return _metric(value, unit, **options)
+
     def industry_options(applies: bool, label: str) -> dict[str, str]:
         if applies:
             return {}
@@ -288,12 +298,12 @@ def _financial_kpis(company_rows: pd.DataFrame) -> tuple[int, str, dict[str, dic
         }
 
     return int(latest["연도"]), analysis_type, {
-        "revenue_growth": _metric(latest["매출성장"], "%", **general_options),
-        "operating_profit_growth": _metric(latest["영업이익성장"], "%"),
-        "net_income_growth": _metric(latest["당기순이익성장"], "%"),
+        "revenue_growth": noted_metric("매출성장", **general_options),
+        "operating_profit_growth": noted_metric("영업이익성장"),
+        "net_income_growth": noted_metric("당기순이익성장"),
         "operating_margin": _metric(latest["영업이익률"], "%", **general_options),
         "net_margin": _metric(net_margin, "%", **general_options),
-        "roe": _metric(latest["ROE"], "%"),
+        "roe": noted_metric("ROE"),
         "roa": _metric(
             roa,
             "%",
@@ -304,7 +314,7 @@ def _financial_kpis(company_rows: pd.DataFrame) -> tuple[int, str, dict[str, dic
                 else None
             ),
         ),
-        "debt_ratio": _metric(latest["부채비율"], "%", **general_options),
+        "debt_ratio": noted_metric("부채비율", **general_options),
         "interest_coverage_ratio": _metric(
             latest["이자보상배율"], "배", **general_options
         ),
@@ -340,9 +350,8 @@ def _financial_kpis(company_rows: pd.DataFrame) -> tuple[int, str, dict[str, dic
             "%",
             **industry_options(insurance_company, "보험업"),
         ),
-        "insurance_revenue_growth": _metric(
-            latest.get("보험서비스수익성장", pd.NA),
-            "%",
+        "insurance_revenue_growth": noted_metric(
+            "보험서비스수익성장",
             **industry_options(insurance_company, "보험업"),
         ),
         "investment_profit": _metric(

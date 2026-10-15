@@ -373,37 +373,40 @@ def collect_market_macro(
 
     _notify_progress(progress_callback, "macro", 71, "원/달러 환율을 수집하고 있습니다.")
     fx_rows: list = []
-    ecos_client = None
-    try:
-        fx_started_at = time.monotonic()
-        ecos_client = InterestRateClient(get_ecos_api_key(PROJECT_ROOT))
-        fx_series = ecos_client.get_usd_krw(fetch_start, trading_end)
-        fx_rows = fx_series.rows
-        LOGGER.info(
-            "performance stage=exchange_rate duration_seconds=%.3f row_count=%d",
-            time.monotonic() - fx_started_at,
-            len(fx_rows),
-        )
-    except (MacroAPIError, ValueError) as error:
-        LOGGER.warning("exchange_rate_primary_failed error=%s", error)
-        warnings.append(f"환율 데이터를 불러오지 못했습니다. ({error})")
-
-    _notify_progress(progress_callback, "macro", 74, "금리를 수집하고 있습니다.")
     rate_rows: list = []
     corporate_bond_rows: list = []
-    rate_client = ecos_client
+    # 환율과 금리는 같은 ECOS 키를 쓰므로 키가 없을 때는 경고를 한 번만 남긴다.
+    rate_client = None
     try:
-        treasury_started_at = time.monotonic()
-        if rate_client is None:
-            rate_client = InterestRateClient(get_ecos_api_key(PROJECT_ROOT))
-        rate_rows = rate_client.get_treasury_3y(fetch_start, trading_end).rows
-        LOGGER.info(
-            "performance stage=treasury_rate duration_seconds=%.3f row_count=%d",
-            time.monotonic() - treasury_started_at,
-            len(rate_rows),
-        )
-    except (MacroAPIError, ValueError) as error:
-        warnings.append(f"금리 데이터를 불러오지 못했습니다. ({error})")
+        rate_client = InterestRateClient(get_ecos_api_key(PROJECT_ROOT))
+    except MacroAPIError as error:
+        warnings.append(f"환율과 금리 데이터를 불러오지 못했습니다. ({error})")
+
+    if rate_client is not None:
+        try:
+            fx_started_at = time.monotonic()
+            fx_rows = rate_client.get_usd_krw(fetch_start, trading_end).rows
+            LOGGER.info(
+                "performance stage=exchange_rate duration_seconds=%.3f row_count=%d",
+                time.monotonic() - fx_started_at,
+                len(fx_rows),
+            )
+        except (MacroAPIError, ValueError) as error:
+            LOGGER.warning("exchange_rate_primary_failed error=%s", error)
+            warnings.append(f"환율 데이터를 불러오지 못했습니다. ({error})")
+
+    _notify_progress(progress_callback, "macro", 74, "금리를 수집하고 있습니다.")
+    if rate_client is not None:
+        try:
+            treasury_started_at = time.monotonic()
+            rate_rows = rate_client.get_treasury_3y(fetch_start, trading_end).rows
+            LOGGER.info(
+                "performance stage=treasury_rate duration_seconds=%.3f row_count=%d",
+                time.monotonic() - treasury_started_at,
+                len(rate_rows),
+            )
+        except (MacroAPIError, ValueError) as error:
+            warnings.append(f"금리 데이터를 불러오지 못했습니다. ({error})")
 
     _notify_progress(
         progress_callback,

@@ -12,6 +12,7 @@ import pandas as pd
 from PIL import Image
 
 from src.app import (
+    ACTIVE_RUN_IDS,
     GPT_RUNS,
     KPI_HELP_TEXT,
     app,
@@ -331,32 +332,92 @@ class AppStockIntegrationTests(unittest.TestCase):
         from src.app import encode_gpt_request_data
 
         result = self.fake_result()
-        run_gpt.return_value = ([], [], "")
-        request_data = encode_gpt_request_data(
-            {"payload": result.kpi_payload, "macro_chart_groups": []}
-        )
-
-        response = self.client.post(
-            f"/gpt-analysis/{'f' * 32}", json=request_data
-        )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json()["status"], "complete")
-        run_gpt.assert_called_once_with(result.kpi_payload)
-
-    @patch("src.app.run_gpt_analysis_with_timeout")
-    def test_stateless_gpt_post_returns_completed_fragment(self, run_gpt):
         run_gpt.return_value = ([], [], "KPI 기반 대체 분석입니다.")
-        response = self.client.post(
-            f"/gpt-analysis/{'e' * 32}",
-            json={"payload": self.fake_result().kpi_payload, "macro_chart_groups": []},
+        run_id = "f" * 32
+        request_data = encode_gpt_request_data(
+            {"payload": result.kpi_payload, "macro_chart_groups": []}, run_id
         )
+
+        response = self.client.post(f"/gpt-analysis/{run_id}", json=request_data)
 
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
         self.assertEqual(payload["status"], "complete")
         self.assertIn("KPI 기반 대체 분석입니다.", payload["html"])
-        run_gpt.assert_called_once()
+        run_gpt.assert_called_once_with(result.kpi_payload)
+
+    @patch("src.app.run_gpt_analysis_with_timeout")
+    def test_stateless_gpt_post_rejects_requests_not_issued_by_server(self, run_gpt):
+        from src.app import encode_gpt_request_data
+
+        data = {"payload": self.fake_result().kpi_payload, "macro_chart_groups": []}
+        run_id = "f" * 32
+        signed = encode_gpt_request_data(data, run_id)
+        other = encode_gpt_request_data({**data, "macro_chart_groups": [{}]}, run_id)
+        cases = {
+            "평문 KPI": data,
+            "서명 없음": {key: signed[key] for key in ("encoding", "data")},
+            "다른 실행 ID": signed,
+            "본문 변조": {**signed, "data": other["data"]},
+            "만료 시각 변조": {**signed, "expires_at": signed["expires_at"] + 3600},
+        }
+        for label, body in cases.items():
+            with self.subTest(label):
+                target = "e" * 32 if label == "다른 실행 ID" else run_id
+                response = self.client.post(f"/gpt-analysis/{target}", json=body)
+                self.assertEqual(response.status_code, 403)
+                self.assertEqual(response.get_json()["status"], "failed")
+        run_gpt.assert_not_called()
+
+    @patch("src.app.run_gpt_analysis_with_timeout")
+    def test_stateless_gpt_post_allows_body_above_form_limit(self, run_gpt):
+        import secrets as secrets_module
+
+        from src.app import encode_gpt_request_data
+
+        run_gpt.return_value = ([], [], "")
+        run_id = "f" * 32
+        # 압축되지 않는 문자열로 앱 전체 폼 제한(32KB)을 넘는 요청을 만든다.
+        groups = [{"key": "correlation", "note": secrets_module.token_hex(30_000)}]
+        signed = encode_gpt_request_data(
+            {"payload": self.fake_result().kpi_payload, "macro_chart_groups": groups},
+            run_id,
+        )
+
+        response = self.client.post(f"/gpt-analysis/{run_id}", json=signed)
+        form_response = self.client.post(
+            "/analyze", data={"company": "가" * 40_000}
+        )
+
+        self.assertGreater(len(signed["data"]), app.config["MAX_CONTENT_LENGTH"])
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["status"], "complete")
+        self.assertEqual(form_response.status_code, 413)
+
+    def test_index_estimates_progress_when_server_progress_is_unavailable(self):
+        html = self.client.get("/").get_data(as_text=True)
+
+        self.assertIn("estimatedProgress", html)
+        self.assertIn("(예상 진행률)", html)
+
+    @patch("src.app.run_gpt_analysis_with_timeout")
+    def test_stateless_gpt_post_rejects_expired_request(self, run_gpt):
+        from src.app import GPT_REQUEST_TTL_SECONDS, encode_gpt_request_data
+
+        run_id = "f" * 32
+        signed = encode_gpt_request_data(
+            {"payload": self.fake_result().kpi_payload, "macro_chart_groups": []},
+            run_id,
+        )
+        with patch(
+            "src.app.time.time",
+            return_value=time.time() + GPT_REQUEST_TTL_SECONDS + 1,
+        ):
+            response = self.client.post(f"/gpt-analysis/{run_id}", json=signed)
+
+        self.assertEqual(response.status_code, 403)
+        self.assertIn("시간이 지났습니다", response.get_json()["message"])
+        run_gpt.assert_not_called()
 
     def test_vercel_chart_is_embedded_as_webp_data_url(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -410,6 +471,38 @@ class AppStockIntegrationTests(unittest.TestCase):
             self.assertEqual(payload["status"], "complete")
             self.assertIn("한줄 핵심 요약", payload["html"])
             self.assertGreater(analyze_kpis.call_args.kwargs["timeout"], 10)
+        finally:
+            GPT_RUNS.pop(run_id, None)
+
+    @patch("src.app.build_gpt_cards", side_effect=ValueError("unexpected"))
+    @patch("src.app.analyze_kpis")
+    def test_async_gpt_unexpected_error_marks_run_failed(
+        self, analyze_kpis, _build_gpt_cards
+    ):
+        result = self.fake_result()
+        analyze_kpis.return_value = {
+            "analyses": result.gpt_insights,
+            "comparisons": result.gpt_comparisons,
+        }
+        run_id = "e" * 32
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                start_async_gpt_analysis(
+                    run_id,
+                    result.kpi_payload,
+                    [],
+                    Path(directory),
+                )
+                deadline = time.monotonic() + 2
+                while time.monotonic() < deadline:
+                    if GPT_RUNS.get(run_id, {}).get("status") != "loading":
+                        break
+                    time.sleep(0.01)
+
+                response = self.client.get(f"/gpt-analysis/{run_id}")
+
+            self.assertEqual(response.get_json()["status"], "failed")
+            self.assertNotIn(run_id, ACTIVE_RUN_IDS)
         finally:
             GPT_RUNS.pop(run_id, None)
 

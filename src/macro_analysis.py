@@ -176,7 +176,8 @@ def _attach_series(
         series,
         on="기준일",
         direction="backward",
-        tolerance=pd.Timedelta(days=MAX_FILL_DAYS),
+        # days= 키워드는 최신 NumPy에서 단위 없는 timedelta 경고를 내므로 단위를 명시한다.
+        tolerance=pd.Timedelta(MAX_FILL_DAYS, unit="D"),
     )
     values = filled[column].copy()
     ffilled = (~observed) & values.notna().to_numpy()

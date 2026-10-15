@@ -340,6 +340,30 @@ class ResultDashboardViewModelTests(unittest.TestCase):
             ["KOSPI", "KOSDAQ"],
         )
 
+    def test_missing_ecos_key_warns_once_for_fx_and_rates(self):
+        from src.macro_api import MacroAPIError
+
+        prices = pd.DataFrame(
+            {
+                "기업명": ["코스피사", "코스피사"],
+                "종목코드": ["000001", "000001"],
+                "기준일": pd.to_datetime(["2026-01-02", "2026-01-03"]),
+                "종가": [1000.0, 1010.0],
+                "시장구분": ["KOSPI", "KOSPI"],
+            }
+        )
+        warnings = []
+        with patch(
+            "src.main.get_ecos_api_key",
+            side_effect=MacroAPIError("ECOS_API_KEY를 설정해 주세요."),
+        ):
+            merged = collect_market_macro(prices, warnings)
+
+        ecos_warnings = [item for item in warnings if "ECOS_API_KEY" in item]
+        self.assertEqual(len(ecos_warnings), 1)
+        self.assertIn("환율과 금리", ecos_warnings[0])
+        self.assertEqual(len(merged), 2)
+
     def test_stock_charts_are_grouped_by_comparison_purpose(self):
         items = [
             {"filename": "stock_price_1.png", "group": "price"},

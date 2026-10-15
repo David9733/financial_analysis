@@ -148,7 +148,7 @@ def _create_monthly_volume_chart(data: pd.DataFrame, company: str, output_path: 
     if len(monthly) < MONTHLY_VOLUME_MIN_MONTHS:
         return
     # 월말 날짜 대신 그달 가운데에 막대를 놓아 날짜축과 맞춘다.
-    centers = monthly.index - pd.Timedelta(days=15)
+    centers = monthly.index - pd.Timedelta(15, unit="D")
     fig, ax = plt.subplots(figsize=(10, 4.5))
     bars = ax.bar(
         centers, monthly["월평균거래량"], width=24, color="#93B4E8", label="월평균 일거래량"

@@ -68,7 +68,8 @@ def _metric_value(metrics: dict[str, dict], key: str) -> float | None:
 def _growth(current: Any, previous: Any) -> float | None:
     current_number = _number(current)
     previous_number = _number(previous)
-    if current_number is None or previous_number in (None, 0.0):
+    # 전년 값이 0 이하이면 증감률 부호가 뒤집히므로 점수에 넣지 않는다.
+    if current_number is None or previous_number is None or previous_number <= 0:
         return None
     return (current_number / previous_number - 1.0) * 100.0
 
@@ -96,13 +97,23 @@ def _component(
     *,
     trend_key: str | None = None,
     is_proxy: bool = False,
+    fixed_score: float | None = None,
+    fixed_display: str | None = None,
 ) -> dict[str, Any]:
+    if fixed_score is not None:
+        score = fixed_score
+    else:
+        score = interpolate_score(value, anchors) if value is not None else None
+    if fixed_display is not None:
+        display_value = fixed_display
+    else:
+        display_value = _format_value(value, unit) if value is not None else None
     return {
         "label": label,
         "value": value,
-        "display_value": _format_value(value, unit) if value is not None else None,
+        "display_value": display_value,
         "weight": weight,
-        "score": interpolate_score(value, anchors) if value is not None else None,
+        "score": score,
         "trend_key": trend_key,
         "is_proxy": is_proxy,
     }
@@ -192,7 +203,13 @@ def build_star_score(
     """기업 하나의 성장성, 수익성, 안정성, 효율성 및 시장흐름 점수를 만든다."""
     ordered = score_rows.sort_values("연도").reset_index(drop=True)
     latest = ordered.iloc[-1] if not ordered.empty else None
-    previous = ordered.iloc[-2] if len(ordered) >= 2 else None
+    # 성장률과 평균자산은 바로 전 사업연도와 비교해야 하므로 연도가 이어질 때만 쓴다.
+    previous = (
+        ordered.iloc[-2]
+        if len(ordered) >= 2
+        and int(ordered.iloc[-1]["연도"]) - int(ordered.iloc[-2]["연도"]) == 1
+        else None
+    )
     latest_value = lambda column: _row_value(latest, column)
     previous_value = lambda column: _row_value(previous, column)
 
@@ -264,8 +281,23 @@ def build_star_score(
             _component("ROE", _metric_value(financial_kpi, "roe"), "%", 0.25, ROE_ANCHORS, trend_key="roe"),
             _component("ROA", _metric_value(financial_kpi, "roa"), "%", 0.2, ROA_ANCHORS, trend_key="roa"),
         ]
+        debt_metric = financial_kpi.get("debt_ratio", {})
+        # 자본잠식은 부채비율을 계산할 수 없지만 안정성이 가장 낮은 상태이므로 0점으로 반영한다.
+        capital_impaired = (
+            debt_metric.get("status") == "negative_base"
+            and debt_metric.get("reason") == "자본잠식"
+        )
         stability = [
-            _component("부채비율", _metric_value(financial_kpi, "debt_ratio"), "%", 0.5, DEBT_RATIO_ANCHORS, trend_key="debt_ratio"),
+            _component(
+                "부채비율",
+                _metric_value(financial_kpi, "debt_ratio"),
+                "%",
+                0.5,
+                DEBT_RATIO_ANCHORS,
+                trend_key="debt_ratio",
+                fixed_score=0.0 if capital_impaired else None,
+                fixed_display="자본잠식" if capital_impaired else None,
+            ),
             _component("이자보상배율", _metric_value(financial_kpi, "interest_coverage_ratio"), "배", 0.5, INTEREST_COVERAGE_ANCHORS, trend_key="interest_coverage_ratio"),
         ]
         efficiency = [

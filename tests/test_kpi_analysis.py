@@ -12,12 +12,19 @@ from src.financial_analysis import (
     RAW_COLUMNS,
     calculate_metrics,
     extract_source_accounts,
+    format_result_for_csv,
     select_output_periods,
 )
+from src.app import format_kpi_metric
 from src.kpi_analysis import _financial_trends, build_kpi_payload
 from src.dart_api import CompanyNotFoundError
 from src.main import _query_years, _resolve_company_inputs
-from src.star_score import GROWTH_ANCHORS, build_star_score, interpolate_score
+from src.star_score import (
+    GROWTH_ANCHORS,
+    _growth,
+    build_star_score,
+    interpolate_score,
+)
 
 
 class KPIAnalysisTests(unittest.TestCase):
@@ -94,6 +101,147 @@ class KPIAnalysisTests(unittest.TestCase):
         self.assertAlmostEqual(latest["당기순이익성장"], 25.0)
         self.assertAlmostEqual(latest["ROE"], 22.22)
         self.assertAlmostEqual(latest["ROA"], 9.09)
+
+    @staticmethod
+    def raw_record(company, year, key, amount):
+        return {
+            "기업명": company,
+            "연도": year,
+            "재무제표구분": "CFS",
+            "원천항목": key,
+            "계정ID": "",
+            "계정명": "",
+            "재무제표종류": "",
+            "금액": amount,
+            "통화": "KRW",
+            "접수번호": "",
+        }
+
+    def test_growth_from_negative_base_is_labeled_instead_of_sign_flipped(self):
+        def record(year, key, amount):
+            return self.raw_record("테스트전환", year, key, amount)
+
+        records = []
+        for year, revenue, operating_profit, net_income in (
+            (2023, 1000, -100, -20),
+            (2024, 1100, 50, -30),
+        ):
+            records += [
+                record(year, "revenue", revenue),
+                record(year, "operating_profit", operating_profit),
+                record(year, "net_income", net_income),
+                record(year, "assets", 2000),
+                record(year, "liabilities", 1000),
+                record(year, "equity", 1000),
+            ]
+
+        metrics = calculate_metrics(pd.DataFrame(records, columns=RAW_COLUMNS))
+        latest = metrics.loc[metrics["연도"] == 2024].iloc[0]
+
+        # -100 → 50을 그대로 계산하면 -150%가 되어 감소로 읽힌다.
+        self.assertTrue(pd.isna(latest["영업이익성장"]))
+        self.assertTrue(pd.isna(latest["당기순이익성장"]))
+        self.assertAlmostEqual(latest["매출성장"], 10.0)
+        display = format_result_for_csv(metrics)
+        self.assertEqual(display.loc[1, "영업이익성장"], "흑자전환")
+        self.assertEqual(display.loc[1, "당기순이익성장"], "적자지속")
+        self.assertNotIn("_영업이익성장비고", display.columns)
+
+        payload = build_kpi_payload(
+            select_output_periods(metrics, number_of_years=1),
+            pd.DataFrame(),
+            "1y",
+            financial_trend_source=metrics,
+        )
+        financial_kpi = payload["companies"][0]["financial_kpi"]
+        self.assertEqual(financial_kpi["operating_profit_growth"]["status"], "negative_base")
+        self.assertEqual(financial_kpi["operating_profit_growth"]["reason"], "흑자전환")
+        self.assertEqual(format_kpi_metric(financial_kpi["net_income_growth"]), "적자지속")
+        self.assertEqual(financial_kpi["revenue_growth"]["status"], "available")
+        self.assertIsNone(_growth(50, -100))
+        self.assertIsNone(_growth(50, 0))
+        self.assertAlmostEqual(_growth(150, 100), 50.0)
+
+    def test_capital_impairment_is_labeled_and_scores_zero_stability(self):
+        def record(year, key, amount):
+            return self.raw_record("테스트잠식", year, key, amount)
+
+        records = []
+        for year, equity in ((2023, -100), (2024, -200)):
+            records += [
+                record(year, "revenue", 1000),
+                record(year, "operating_profit", 50),
+                record(year, "net_income", -100),
+                record(year, "assets", 1000),
+                record(year, "liabilities", 1000 - equity),
+                record(year, "equity", equity),
+                # 이자지급액을 음수(유출)로 공시한 경우
+                record(year, "interest_paid", -25),
+            ]
+
+        metrics = calculate_metrics(pd.DataFrame(records, columns=RAW_COLUMNS))
+        latest = metrics.loc[metrics["연도"] == 2024].iloc[0]
+
+        # 그대로 계산하면 부채비율 -600%, ROE +66.67%가 된다.
+        self.assertTrue(pd.isna(latest["부채비율"]))
+        self.assertTrue(pd.isna(latest["ROE"]))
+        self.assertAlmostEqual(latest["이자보상배율"], 2.0)
+        display = format_result_for_csv(metrics)
+        self.assertEqual(display.loc[1, "부채비율"], "자본잠식")
+        self.assertEqual(display.loc[1, "ROE"], "자본잠식")
+
+        payload = build_kpi_payload(
+            select_output_periods(metrics, number_of_years=1),
+            pd.DataFrame(),
+            "1y",
+            financial_trend_source=metrics,
+        )
+        company = payload["companies"][0]
+        self.assertEqual(format_kpi_metric(company["financial_kpi"]["debt_ratio"]), "자본잠식")
+        self.assertEqual(company["financial_kpi"]["roe"]["status"], "negative_base")
+        stability = next(axis for axis in company["star_score"] if axis["key"] == "stability")
+        # 부채비율 0점 50% + 이자보상배율 2배(50점) 50% = 25점
+        self.assertEqual(stability["score"], 25)
+        self.assertIn({"label": "부채비율", "value": "자본잠식"}, stability["evidence"])
+
+    def test_financial_star_growth_skips_non_consecutive_previous_year(self):
+        def rows(years):
+            return pd.DataFrame(
+                [
+                    {
+                        "연도": year,
+                        "순이자손익": interest,
+                        "순수수료손익": 100,
+                        "총자산": 10_000,
+                        "자본총계": 800,
+                        "당기순이익": 50,
+                    }
+                    for year, interest in zip(years, (100, 150))
+                ]
+            )
+
+        def growth_axis(years):
+            axes = build_star_score("금융업", rows(years), {}, {}, {}, {})
+            return next(axis for axis in axes if axis["key"] == "growth")
+
+        labels = lambda axis: {item["label"] for item in axis["evidence"]}
+        # 2023→2024는 1년 성장률이지만 2021→2024는 3년 변화라 성장률로 쓰지 않는다.
+        self.assertIn("순이자손익 성장률", labels(growth_axis((2023, 2024))))
+        self.assertEqual(growth_axis((2021, 2024))["status"], "insufficient_data")
+
+    def test_interest_paid_classified_as_financing_activity_is_selected(self):
+        rows = [
+            {
+                "sj_div": "CF",
+                "account_id": "ifrs-full_InterestPaidClassifiedAsFinancingActivities",
+                "account_nm": "이자지급",
+                "thstrm_amount": "30",
+            }
+        ]
+        records = extract_source_accounts("테스트", 2024, "CFS", rows, log_missing=False)
+        interest = next(item for item in records if item["원천항목"] == "interest_paid")
+
+        self.assertEqual(interest["금액"], 30.0)
 
     @staticmethod
     def financial_frame() -> pd.DataFrame:
