@@ -7,12 +7,19 @@
 
 프로젝트 루트의 `.env.example`을 `.env`로 복사하고 사용할 키를 입력합니다.
 
-| 키 | 함께 인식하는 이름 | 서비스 | 용도 |
-|---|---|---|---|
-| `DART_KEY` | `DART_API_KEY` | [Open DART](https://opendart.fss.or.kr/) | 기업 검색과 재무제표 (필수) |
-| `PUBLIC_STOCK_API_KEY` | `STOCK_API_KEY` | [공공데이터포털](https://www.data.go.kr/) | 주식시세, KOSPI/KOSDAQ 지수 |
-| `ECOS_API_KEY` | - | [한국은행 ECOS](https://ecos.bok.or.kr/api/) | 원/달러 환율, 국고채와 회사채 금리 |
-| `OPENAI_API_KEY` | `GPT_KEY` | [OpenAI](https://platform.openai.com/api-keys) | KPI 기반 보조 인사이트 |
+| 키 | 함께 인식하는 이름 | 서비스 | 용도 | 없을 때 |
+|---|---|---|---|---|
+| `DART_KEY` | `DART_API_KEY` | [Open DART](https://opendart.fss.or.kr/) | 기업 검색과 재무제표 | **필수**, 분석 불가 |
+| `PUBLIC_STOCK_API_KEY` | `STOCK_API_KEY` | [공공데이터포털](https://www.data.go.kr/) | 주식시세, KOSPI/KOSDAQ 지수 | 주가와 시장지수 분석 생략 |
+| `ECOS_API_KEY` | - | [한국은행 ECOS](https://ecos.bok.or.kr/api/) | 원/달러 환율, 국고채와 회사채 금리 | 환율, 금리와 신용 스프레드 지표 제외 |
+| `OPENAI_API_KEY` | `GPT_KEY` | [OpenAI](https://platform.openai.com/api-keys) | KPI 기반 보조 인사이트 | KPI 기반 대체 인사이트 표시 |
+
+| 선택 설정 | 기본값 | 설명 |
+|---|---|---|
+| `OPENAI_MODEL` | `gpt-4o-mini` | GPT 분석 모델 |
+| `GPT_BACKGROUND_TIMEOUT_SECONDS` | `240` | 웹 GPT 요청 제한 시간(초) |
+| `GPT_REQUEST_SECRET` | `OPENAI_API_KEY`에서 파생 | Vercel GPT 요청 서명 키, Vercel에서는 별도 설정 권장 |
+| `FINANCIAL_ANALYSIS_RUNTIME_DIR` | 프로젝트 루트(Vercel은 `/tmp`) | 결과와 캐시 저장 위치 |
 
 공공데이터포털에서는 금융위원회의 `주식시세정보`와 `지수시세정보` 두 서비스를 각각
 활용 신청해야 합니다. 이미 설정된 시스템 환경 변수는 `.env` 값보다 우선합니다.
@@ -35,6 +42,18 @@ GPT_BACKGROUND_TIMEOUT_SECONDS=240
 
 ```powershell
 uv run --python 3.10 --isolated --with-requirements requirements.lock src/app.py
+```
+
+`uv` 없이 실행하려면 가상환경을 만들고 고정 버전을 설치합니다.
+
+```bash
+python -m venv .venv
+# Windows
+.\.venv\Scripts\python.exe -m pip install -r requirements.lock
+.\.venv\Scripts\python.exe src/app.py
+# macOS / Linux
+.venv/bin/python -m pip install -r requirements.lock
+.venv/bin/python src/app.py
 ```
 
 기본 주소는 `http://127.0.0.1:5000`이며 종료는 `Ctrl+C`입니다.
@@ -200,7 +219,18 @@ output/
 └── web_runs/
 ```
 
-웹 분석은 실행별 UUID 폴더를 사용합니다. 완료 결과는 1시간 동안 보관하며 이후 새
+| 결과물 | 내용 |
+|---|---|
+| `financial_analysis.csv` | 업종별 연간 재무지표 |
+| `stock_prices.csv`, `stock_summary.csv` | 일별 주가와 기간 요약 |
+| `investor_summary.csv` | 투자자별 매수, 매도, 순매수 거래량과 비중 |
+| `market_macro.csv` | 주가, 시장지수와 외부 요인의 수준값 및 변화량 |
+| `data_quality_log.csv` | 보간, 단위 보정과 이상치 처리 내역 |
+| `kpi_analysis.json` | 화면과 GPT 분석에 사용하는 KPI와 5축 스타 점수 스키마 |
+| `gpt_insights.json` | GPT 또는 KPI 기반 대체 인사이트와 다중 기업 비교 |
+| `charts/`, `stock_charts/` | 재무, 주가, 투자자와 매크로 차트 |
+
+데이터가 없는 결과물은 생성되지 않을 수 있습니다. 웹 분석은 실행별 UUID 폴더를 사용합니다. 완료 결과는 1시간 동안 보관하며 이후 새
 분석이 완료될 때 정리합니다. 실행 중이거나 완료 표식이 없는 폴더는 삭제하지 않습니다.
 
 ## 7. 주요 소스 구조
