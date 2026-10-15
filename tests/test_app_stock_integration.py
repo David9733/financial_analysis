@@ -17,6 +17,7 @@ from src.app import (
     app,
     build_chart_url,
     build_stock_chart_items,
+    format_korean_won,
     format_kpi_metric,
     run_gpt_analysis_with_timeout,
     start_async_gpt_analysis,
@@ -80,13 +81,31 @@ class AppStockIntegrationTests(unittest.TestCase):
             "0.018",
         )
 
+    def test_market_cap_uses_readable_korean_won_units(self):
+        self.assertEqual(format_korean_won(10_000), "1만원")
+        self.assertEqual(
+            format_korean_won(442_046_607_000_000),
+            "442조 466억 700만원",
+        )
+
     @staticmethod
     def fake_result() -> IntegratedAnalysisResult:
         financial_row = {column: "해당 없음(업종)" for column in FINAL_COLUMNS}
         financial_row.update({"기업명": "삼성전자", "분석유형": "일반기업", "연도": 2025})
         financial = pd.DataFrame([financial_row], columns=FINAL_COLUMNS)
         summary = pd.DataFrame(
-            [["삼성전자", "005930", pd.Timestamp("2026-09-30"), 268500, 12.5, 276000, 250000, 1000, 2000, 3000]],
+            [[
+                "삼성전자",
+                "005930",
+                pd.Timestamp("2026-09-30"),
+                268500,
+                12.5,
+                276000,
+                250000,
+                1000,
+                2000,
+                442_046_607_000_000,
+            ]],
             columns=STOCK_SUMMARY_COLUMNS,
         )
         return IntegratedAnalysisResult(
@@ -186,6 +205,7 @@ class AppStockIntegrationTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("주식시장 분석", html)
+        self.assertIn("<dt>시가총액</dt><dd>442조 466억 700만원</dd>", html)
         self.assertIn('class="single-kpi-table"', html)
         self.assertNotIn("<th>지표</th><th>삼성전자</th>", html)
         self.assertIn("재무 분석", response.get_data(as_text=True))

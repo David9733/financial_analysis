@@ -292,6 +292,11 @@ def _create_investor_pie(
 
 
 OUTLIER_COLOR = "#E53935"
+MACRO_CHART_TITLE_SIZE = 15
+MACRO_AXIS_LABEL_SIZE = 12
+MACRO_TICK_LABEL_SIZE = 11
+MACRO_LEGEND_SIZE = 11
+MACRO_STATUS_TEXT_SIZE = 11
 
 
 def _true_rows(data: pd.DataFrame, column: str) -> pd.DataFrame:
@@ -305,7 +310,8 @@ def _plot_close_with_macro(
 ) -> None:
     """왼쪽 축에 종가, 오른쪽 축에 매크로 값을 같은 거래일 기준으로 그린다."""
     ax.plot(data["기준일"], data["종가"], color=COLORS[0], linewidth=1.6, label="종가")
-    ax.set_ylabel("종가(원)")
+    ax.set_ylabel("종가(원)", fontsize=MACRO_AXIS_LABEL_SIZE)
+    ax.tick_params(axis="both", labelsize=MACRO_TICK_LABEL_SIZE)
     macro_ax = ax.twinx()
     macro_ax.plot(data["기준일"], data[column], color=color, linewidth=1.4, label=label)
     filled = _true_rows(data, flag)
@@ -329,10 +335,17 @@ def _plot_close_with_macro(
             zorder=4,
             label="하루 변화 이상치",
         )
-    macro_ax.set_ylabel(label)
+    macro_ax.set_ylabel(label, fontsize=MACRO_AXIS_LABEL_SIZE)
+    macro_ax.tick_params(axis="y", labelsize=MACRO_TICK_LABEL_SIZE)
     handles, labels = ax.get_legend_handles_labels()
     macro_handles, macro_labels = macro_ax.get_legend_handles_labels()
-    ax.legend(handles + macro_handles, labels + macro_labels, loc="upper left", frameon=False, fontsize=9)
+    ax.legend(
+        handles + macro_handles,
+        labels + macro_labels,
+        loc="upper left",
+        frameon=False,
+        fontsize=MACRO_LEGEND_SIZE,
+    )
     _finish_date_axis(ax)
 
 
@@ -400,7 +413,8 @@ def create_macro_visualizations(market_macro: pd.DataFrame, charts_dir: Path) ->
         for ax, (column, flag, outlier, label, color) in zip(axes[:, 0], company_panels):
             _plot_close_with_macro(ax, data, column, flag, outlier, label, color)
         axes[0, 0].set_title(
-            f"{company} 주가와 {index_name}, 환율, 금리, 신용 스프레드"
+            f"{company} 주가와 {index_name}, 환율, 금리, 신용 스프레드",
+            fontsize=MACRO_CHART_TITLE_SIZE,
         )
         fig.tight_layout()
         fig.savefig(charts_dir / f"macro_{code}.png", dpi=160, bbox_inches="tight")
@@ -480,13 +494,17 @@ def create_daily_change_visualizations(market_macro: pd.DataFrame, charts_dir: P
                 _outlier_status_text(len(outliers), bounds),
                 transform=ax.transAxes,
                 va="top",
-                fontsize=9,
+                fontsize=MACRO_STATUS_TEXT_SIZE,
                 color=OUTLIER_COLOR if not outliers.empty else STATUS_MUTED_COLOR,
                 bbox={"facecolor": "white", "alpha": 0.8, "edgecolor": "none", "pad": 2},
             )
-            ax.set_ylabel(label)
+            ax.set_ylabel(label, fontsize=MACRO_AXIS_LABEL_SIZE)
+            ax.tick_params(axis="both", labelsize=MACRO_TICK_LABEL_SIZE)
             _finish_date_axis(ax)
-        axes[0, 0].set_title(f"{company} 하루 변화와 이상치 (빨간 점선: 통상 범위)")
+        axes[0, 0].set_title(
+            f"{company} 하루 변화와 이상치 (빨간 점선: 통상 범위)",
+            fontsize=MACRO_CHART_TITLE_SIZE,
+        )
         fig.tight_layout()
         fig.savefig(charts_dir / f"daily_change_{code}.png", dpi=160, bbox_inches="tight")
         plt.close(fig)

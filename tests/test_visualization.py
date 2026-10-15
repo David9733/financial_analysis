@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -27,6 +28,7 @@ from src.stock_visualization import (
     create_daily_change_visualizations,
     create_fx_rate_scatter_visualizations,
     create_market_correlation_heatmaps,
+    create_macro_visualizations,
     monthly_volume_summary,
     volume_direction_counts,
 )
@@ -348,6 +350,60 @@ class FXRateScatterVisualizationTests(unittest.TestCase):
             create_fx_rate_scatter_visualizations(self.macro_frame(), Path(directory))
 
             self.assertTrue((Path(directory) / "fx_rate_scatter_000001.png").exists())
+
+
+class MacroChartTypographyTests(unittest.TestCase):
+    def tearDown(self) -> None:
+        plt.close("all")
+
+    def test_daily_change_chart_uses_larger_titles_labels_and_ticks(self):
+        data = FXRateScatterVisualizationTests.macro_frame()
+        with tempfile.TemporaryDirectory() as directory, patch(
+            "src.stock_visualization.plt.close"
+        ):
+            create_daily_change_visualizations(data, Path(directory))
+            figure = plt.gcf()
+
+        self.assertEqual(figure.axes[0].title.get_fontsize(), 15)
+        self.assertTrue(
+            all(
+                text.get_fontsize() == 11
+                for axis in figure.axes
+                for text in axis.texts
+            )
+        )
+        self.assertTrue(
+            all(axis.yaxis.label.get_fontsize() == 12 for axis in figure.axes)
+        )
+        self.assertTrue(
+            all(
+                tick.get_fontsize() == 11
+                for axis in figure.axes
+                for tick in axis.get_xticklabels() + axis.get_yticklabels()
+            )
+        )
+
+    def test_macro_comparison_chart_uses_larger_axis_and_legend_text(self):
+        data = FXRateScatterVisualizationTests.macro_frame()
+        with tempfile.TemporaryDirectory() as directory, patch(
+            "src.stock_visualization.plt.close"
+        ):
+            create_macro_visualizations(data, Path(directory))
+            figure = plt.gcf()
+
+        titled_axis = next(axis for axis in figure.axes if axis.get_title())
+        self.assertEqual(titled_axis.title.get_fontsize(), 15)
+        self.assertTrue(
+            all(axis.yaxis.label.get_fontsize() == 12 for axis in figure.axes)
+        )
+        self.assertTrue(
+            all(
+                text.get_fontsize() == 11
+                for axis in figure.axes
+                if axis.get_legend() is not None
+                for text in axis.get_legend().get_texts()
+            )
+        )
 
 
 class MarketCorrelationHeatmapTests(unittest.TestCase):

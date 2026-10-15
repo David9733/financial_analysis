@@ -469,6 +469,29 @@ def visible_result_columns(display) -> list[str]:
     return visible
 
 
+def format_korean_won(value) -> str:
+    """원 단위 금액을 만, 억, 조 단위로 읽기 쉽게 표시한다."""
+    amount = int(value)
+    if amount == 0:
+        return "0원"
+
+    sign = "-" if amount < 0 else ""
+    remainder = abs(amount)
+    units = ((10**16, "경"), (10**12, "조"), (10**8, "억"), (10**4, "만"))
+    parts = []
+    for unit_value, unit_label in units:
+        quotient, remainder = divmod(remainder, unit_value)
+        if quotient:
+            parts.append(f"{quotient:,}{unit_label}")
+    if remainder:
+        parts.append(f"{remainder:,}원")
+
+    formatted = " ".join(parts)
+    if not formatted.endswith("원"):
+        formatted += "원"
+    return sign + formatted
+
+
 def format_stock_value(column: str, value) -> str:
     """주식시장 요약표 값을 단위에 맞게 표시한다."""
     if value is None or str(value) in {"<NA>", "nan", "NaT"}:
@@ -481,7 +504,9 @@ def format_stock_value(column: str, value) -> str:
         return f"{int(value):,}원"
     if column == "평균거래량":
         return f"{int(value):,}주"
-    if column in {"평균거래대금", "시가총액"}:
+    if column == "시가총액":
+        return format_korean_won(value)
+    if column == "평균거래대금":
         return f"{int(value):,}원"
     return str(value)
 
