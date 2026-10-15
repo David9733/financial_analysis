@@ -488,6 +488,27 @@ class MacroKPITests(unittest.TestCase):
             kpis["weak_krw_rising_rate_judgement"]["value"], "시장 대비 양호"
         )
 
+    def test_tiny_scenario_excess_return_is_judged_similar_to_market(self):
+        from src.kpi_analysis import _weak_krw_rising_rate_scenario
+
+        def judge(company, market):
+            index = range(len(company))
+            series = lambda values: pd.Series(values, index=index, dtype="float64")
+            result = _weak_krw_rising_rate_scenario(
+                series(company),
+                series(market),
+                series([0.5] * len(company)),
+                series([0.05] * len(company)),
+                pd.Series(True, index=index),
+            )
+            return result["weak_krw_rising_rate_judgement"]["value"]
+
+        # SK하이닉스처럼 차이가 -0.01%p면 부호와 관계없이 시장과 유사로 본다.
+        self.assertEqual(judge([-1.47, -1.47], [-1.46, -1.46]), "시장과 유사")
+        self.assertEqual(judge([-1.40, -1.40], [-1.46, -1.46]), "시장과 유사")
+        self.assertEqual(judge([-2.07, -2.07], [-1.46, -1.46]), "시장보다 더 하락")
+        self.assertEqual(judge([-1.30, -1.30], [-1.46, -1.46]), "시장보다 덜 하락")
+
     def test_weak_krw_rising_rate_scenario_keeps_fixed_thresholds(self):
         dates = pd.date_range("2026-01-02", periods=5, freq="B")
         prices = price_frame(list(dates.strftime("%Y-%m-%d"))).assign(

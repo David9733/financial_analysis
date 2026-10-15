@@ -83,6 +83,8 @@ WEAK_KRW_FX_CHANGE_THRESHOLD = 0.3
 RISING_RATE_CHANGE_BP_THRESHOLD = 3.0
 SCENARIO_LIMITED_SAMPLE_DAYS = 5
 SCENARIO_REFERENCE_SAMPLE_DAYS = 10
+# 시장 대비 평균 차이가 이 범위(%p) 안이면 시장과 유사로 판정한다.
+SCENARIO_SIMILAR_BAND_PP = 0.1
 MACRO_KPI_UNITS = {
     "usd_krw_latest": "원",
     "usd_krw_change": "%",
@@ -644,20 +646,21 @@ def _weak_krw_rising_rate_scenario(
     company_average = float(scenario["company"].mean())
     market_average = float(scenario["market"].mean())
     excess_average = float((scenario["company"] - scenario["market"]).mean())
-    if excess_average > 0:
+    # -0.01%p처럼 사실상 같은 차이를 "더 하락"으로 읽지 않도록 작은 차이는 유사로 본다.
+    if abs(excess_average) < SCENARIO_SIMILAR_BAND_PP:
+        judgement = "시장과 유사"
+    elif excess_average > 0:
         judgement = (
             "시장보다 덜 하락"
             if company_average < 0
             else "시장 대비 양호"
         )
-    elif excess_average < 0:
+    else:
         judgement = (
             "시장보다 더 하락"
             if company_average < 0
             else "시장 대비 부진"
         )
-    else:
-        judgement = "시장과 유사"
 
     return {
         "weak_krw_rising_rate_days": _metric(days, "일", digits=0),

@@ -324,6 +324,7 @@ KPI_HELP_TEXT = {
     ),
     "weak_krw_rising_rate_judgement": (
         "시장 대비 평균 차이의 부호와 기업 평균 수익률을 함께 사용한 과거 기간 요약입니다. "
+        "차이가 ±0.1%p 이내이면 시장과 유사로 판정합니다. "
         "미래 수익률 예측이나 투자 권유가 아닙니다."
     ),
 }
@@ -800,7 +801,7 @@ def build_financial_kpi_matrix(payload: dict) -> dict:
             else:
                 badge = ""
             # 색은 판정값으로 정하고, 금액은 늘었지만 성장률이 낮아진 경우만 글자로 덧붙인다.
-            badges.append(f"{badge} · 둔화" if badge and trend.get("slowdown") else badge)
+            badges.append(f"{badge}, 둔화" if badge and trend.get("slowdown") else badge)
             tones.append(
                 {
                     "개선": "improving",

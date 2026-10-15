@@ -1602,6 +1602,10 @@ def _validate_section_semantics(
     }
     if not required_scenario.issubset(evidence):
         raise GPTAnalysisError("시나리오 판정에 발생일, 표본 수준과 시장 대비 차이가 필요합니다.")
+    if metrics.get("weak_krw_rising_rate_judgement", {}).get("value") == "시장과 유사":
+        raise GPTAnalysisError(
+            "시나리오 판정이 시장과 유사이면 취약 또는 완충 가능성을 판정할 수 없습니다."
+        )
     excess = metrics["weak_krw_rising_rate_excess_return"].get("value")
     trend_values = {
         key: metrics.get(key, {}).get("value") for key in SCENARIO_TREND_KEYS

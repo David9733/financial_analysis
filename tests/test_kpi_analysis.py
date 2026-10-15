@@ -236,7 +236,7 @@ class KPIAnalysisTests(unittest.TestCase):
 
         matrix = build_financial_kpi_matrix(payload)
         rows = {row["key"]: row for row in matrix["rows"]}
-        self.assertEqual(rows["operating_profit_growth"]["badges"], ["개선 · 둔화"])
+        self.assertEqual(rows["operating_profit_growth"]["badges"], ["개선, 둔화"])
         self.assertEqual(rows["operating_profit_growth"]["badge_tones"], ["improving"])
         self.assertEqual(rows["revenue_growth"]["badges"], ["개선"])
         self.assertIsNone(_growth(50, -100))
