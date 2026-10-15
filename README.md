@@ -32,9 +32,13 @@
 
 ## 🎬 시연
 <img width="904" height="480" alt="기업 1개 gif" src="https://github.com/user-attachments/assets/b8db5227-63d7-44b0-a1f2-5e401f54533f" />
+1개 기업 분석
+오타 시 막음
+기업명 : 삼성전자, 재무제표 조회기간: 3년, 주가 조회 기간: 1년
 
 <img width="904" height="480" alt="기업 2개 이상" src="https://github.com/user-attachments/assets/2288f8f2-47c5-47d2-bd1b-4541f23d02eb" />
-
+2개 이상 기업 분석
+기업명 : 삼성전자, SK하이닉스, 현대차 재무제표 조회기간: 3년, 주가 조회 기간: 1년
 
 
 결과 화면은 재무(KPI와 3년 추세 배지), 주가(이동평균, 볼린저 밴드, 투자자 비중), 매크로(레이더, 시나리오, 상관 차트), 요약(5축 스타차트, GPT 분석, CSV 다운로드) 탭으로 구성됩니다.
