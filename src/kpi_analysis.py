@@ -141,6 +141,13 @@ LOWER_IS_BETTER_FINANCIAL_KPIS = {
     "debt_ratio",
     "accounts_receivable_days",
 }
+# 성장률 KPI의 3년 추세는 성장률 값 대신 이 원천 금액의 흐름으로 판정한다.
+GROWTH_TREND_AMOUNT_COLUMNS = {
+    "revenue_growth": "매출",
+    "operating_profit_growth": "영업이익",
+    "net_income_growth": "당기순이익",
+    "insurance_revenue_growth": "보험서비스수익",
+}
 
 
 def _number(value: Any, digits: int = 2) -> float | None:
@@ -187,8 +194,53 @@ def _safe_ratio(numerator: Any, denominator: Any) -> float | None:
     return float(numerator) / float(denominator) * 100
 
 
-def _financial_trends(financial_history: list[dict[str, Any]]) -> dict[str, dict]:
-    """최근 3개 연속 사업연도의 KPI 방향을 개선, 악화, 보합 또는 변동으로 판정한다."""
+def _trend_judgement(values: list[float], lower_is_better: bool = False) -> str:
+    """세 값의 방향을 개선, 악화, 보합 또는 변동으로 판정한다."""
+    adjusted = [-value for value in values] if lower_is_better else values
+    if adjusted[0] == adjusted[1] == adjusted[2]:
+        return "보합"
+    if adjusted[0] <= adjusted[1] <= adjusted[2]:
+        return "개선"
+    if adjusted[0] >= adjusted[1] >= adjusted[2]:
+        return "악화"
+    return "변동"
+
+
+def _is_consecutive(periods: list[int]) -> bool:
+    return len(periods) == 3 and periods[1] - periods[0] == 1 and periods[2] - periods[1] == 1
+
+
+def _amount_trend(amount_rows: pd.DataFrame, column: str) -> dict[str, Any] | None:
+    """성장률 KPI의 추세를 원천 금액의 최근 3개 연속 사업연도 흐름으로 판정한다."""
+    if column not in amount_rows or "연도" not in amount_rows:
+        return None
+    recent = amount_rows.sort_values("연도").tail(3)
+    periods = [int(year) for year in recent["연도"]]
+    amounts = pd.to_numeric(recent[column], errors="coerce")
+    if not _is_consecutive(periods) or amounts.isna().any():
+        return None
+    values = [float(value) for value in amounts]
+    return {
+        "value": _trend_judgement(values),
+        "unit": "",
+        "status": "available",
+        "reason": None,
+        "periods": [str(period) for period in periods],
+        "values": values,
+        "basis": column,
+    }
+
+
+def _financial_trends(
+    financial_history: list[dict[str, Any]],
+    amount_rows: pd.DataFrame | None = None,
+) -> dict[str, dict]:
+    """최근 3개 연속 사업연도의 KPI 방향을 개선, 악화, 보합 또는 변동으로 판정한다.
+
+    성장률 KPI는 ``amount_rows``가 있으면 성장률 값이 아니라 매출, 영업이익 같은 금액의
+    흐름으로 판정한다. 전년 적자로 성장률이 비는 흑자전환 연도가 있어도 판정할 수 있고,
+    "이익이 계속 늘었는가"라는 배지의 직관적인 의미와도 맞는다.
+    """
     ordered = sorted(financial_history, key=lambda item: int(item["period"]))
     latest_kpis = ordered[-1]["financial_kpi"] if ordered else {}
     result: dict[str, dict] = {}
@@ -203,18 +255,24 @@ def _financial_trends(financial_history: list[dict[str, Any]]) -> dict[str, dict
             }
             continue
 
+        amount_column = GROWTH_TREND_AMOUNT_COLUMNS.get(key)
+        if amount_column and amount_rows is not None and not amount_rows.empty:
+            amount_trend = _amount_trend(amount_rows, amount_column)
+            if amount_trend is not None:
+                result[key] = amount_trend
+                continue
+
         recent = ordered[-3:]
         periods = [int(item["period"]) for item in recent]
         metrics = [item["financial_kpi"].get(key, {}) for item in recent]
         values = [metric.get("value") for metric in metrics]
-        consecutive = len(periods) == 3 and periods[1] - periods[0] == 1 and periods[2] - periods[1] == 1
         available = all(
             metric.get("status") == "available"
             and value is not None
             and not isinstance(value, str)
             for metric, value in zip(metrics, values)
         )
-        if not consecutive or not available:
+        if not _is_consecutive(periods) or not available:
             result[key] = {
                 "value": None,
                 "unit": "",
@@ -224,21 +282,10 @@ def _financial_trends(financial_history: list[dict[str, Any]]) -> dict[str, dict
             continue
 
         numeric_values = [float(value) for value in values]
-        adjusted = (
-            [-value for value in numeric_values]
-            if key in LOWER_IS_BETTER_FINANCIAL_KPIS
-            else numeric_values
-        )
-        if adjusted[0] == adjusted[1] == adjusted[2]:
-            judgement = "보합"
-        elif adjusted[0] <= adjusted[1] <= adjusted[2]:
-            judgement = "개선"
-        elif adjusted[0] >= adjusted[1] >= adjusted[2]:
-            judgement = "악화"
-        else:
-            judgement = "변동"
         result[key] = {
-            "value": judgement,
+            "value": _trend_judgement(
+                numeric_values, key in LOWER_IS_BETTER_FINANCIAL_KPIS
+            ),
             "unit": "",
             "status": "available",
             "reason": None,
@@ -1184,7 +1231,7 @@ def build_kpi_payload(
             if volume_history is not None and not volume_history.empty
             else None
         )
-        financial_trend = _financial_trends(trend_history)
+        financial_trend = _financial_trends(trend_history, amount_rows=trend_rows)
         market_kpi = _market_kpis(company_prices, company_volume_history)
         macro_kpi = _macro_kpis(
             market_macro[market_macro["기업명"] == company_name]

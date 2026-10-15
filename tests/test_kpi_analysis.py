@@ -158,6 +158,44 @@ class KPIAnalysisTests(unittest.TestCase):
         self.assertEqual(financial_kpi["operating_profit_growth"]["reason"], "흑자전환")
         self.assertEqual(format_kpi_metric(financial_kpi["net_income_growth"]), "적자지속")
         self.assertEqual(financial_kpi["revenue_growth"]["status"], "available")
+
+    def test_growth_trend_badge_uses_amounts_through_turnaround_year(self):
+        def record(year, key, amount):
+            return self.raw_record("테스트반등", year, key, amount)
+
+        # SK하이닉스처럼 2023년 적자 뒤 흑자전환한 경우
+        records = []
+        for year, revenue, operating_profit in (
+            (2022, 1000, 300),
+            (2023, 900, -100),
+            (2024, 1100, 50),
+            (2025, 1000, 80),
+        ):
+            records += [
+                record(year, "revenue", revenue),
+                record(year, "operating_profit", operating_profit),
+                record(year, "net_income", operating_profit),
+                record(year, "assets", 2000),
+                record(year, "liabilities", 1000),
+                record(year, "equity", 1000),
+            ]
+        metrics = calculate_metrics(pd.DataFrame(records, columns=RAW_COLUMNS))
+
+        payload = build_kpi_payload(
+            select_output_periods(metrics, number_of_years=1),
+            pd.DataFrame(),
+            "1y",
+            financial_trend_source=metrics,
+        )
+        trend = payload["companies"][0]["financial_trend"]
+
+        # 2024년 성장률은 흑자전환으로 비어 있지만 금액 -100 → 50 → 80으로 판정한다.
+        self.assertEqual(trend["operating_profit_growth"]["status"], "available")
+        self.assertEqual(trend["operating_profit_growth"]["value"], "개선")
+        self.assertEqual(trend["operating_profit_growth"]["values"], [-100.0, 50.0, 80.0])
+        self.assertEqual(trend["operating_profit_growth"]["periods"], ["2023", "2024", "2025"])
+        # 매출 900 → 1100 → 1000은 오르내림이 섞여 변동이다.
+        self.assertEqual(trend["revenue_growth"]["value"], "변동")
         self.assertIsNone(_growth(50, -100))
         self.assertIsNone(_growth(50, 0))
         self.assertAlmostEqual(_growth(150, 100), 50.0)
