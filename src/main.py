@@ -17,7 +17,13 @@ from typing import Callable
 import pandas as pd
 
 if __package__:  # ``python -m src.main`` 또는 패키지 import
-    from .dart_api import CompanyNotFoundError, DartAPIError, DartClient, get_api_key
+    from .dart_api import (
+        CompanyNotFoundError,
+        DartAPIError,
+        DartClient,
+        _normalize_company_name,
+        get_api_key,
+    )
     from .financial_analysis import (
         RAW_COLUMNS,
         calculate_metrics,
@@ -66,7 +72,13 @@ if __package__:  # ``python -m src.main`` 또는 패키지 import
         create_stock_visualizations,
     )
 else:  # ``python src/main.py``로 직접 실행
-    from dart_api import CompanyNotFoundError, DartAPIError, DartClient, get_api_key
+    from dart_api import (
+        CompanyNotFoundError,
+        DartAPIError,
+        DartClient,
+        _normalize_company_name,
+        get_api_key,
+    )
     from financial_analysis import (
         RAW_COLUMNS,
         calculate_metrics,
@@ -628,6 +640,20 @@ def _resolve_company_inputs(
     return resolved
 
 
+def name_resolution_warnings(resolved_companies: list[dict]) -> list[str]:
+    """약칭이나 부분 이름으로 다른 법인이 선택돼도 사용자가 바로 알 수 있게 알린다."""
+    warnings = []
+    for company in resolved_companies:
+        requested = company.get("requested_name", "")
+        if requested and _normalize_company_name(requested) != _normalize_company_name(
+            company["corp_name"]
+        ):
+            warnings.append(
+                f"'{requested}' 입력을 DART 기업명 '{company['corp_name']}'(으)로 분석했습니다."
+            )
+    return warnings
+
+
 def run_analysis(
     companies: list[str],
     start_year: int | None = None,
@@ -806,7 +832,7 @@ def run_integrated_analysis(
         if trend_records
         else financial
     )
-    warnings: list[str] = []
+    warnings: list[str] = name_resolution_warnings(resolved_companies)
     price_frames: list[pd.DataFrame] = []
     volume_history_frames: list[pd.DataFrame] = []
     investor_frames: list[pd.DataFrame] = []

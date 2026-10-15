@@ -85,6 +85,20 @@ def _normalize_company_name(name: str) -> str:
     return normalized
 
 
+# 흔히 쓰는 약칭 → DART 공식 기업명. 약칭은 부분 일치로 이름이 비슷한 다른 법인을 고를 수 있다.
+# 예: "현대차"를 포함한 상장사는 현대차증권뿐이라 약칭 표 없이는 증권사가 선택된다.
+COMPANY_NAME_ALIASES = {
+    "현대차": "현대자동차",
+    "기아차": "기아",
+    "네이버": "NAVER",
+    "LG엔솔": "LG에너지솔루션",
+}
+_ALIASES_BY_NORMALIZED_NAME = {
+    _normalize_company_name(alias): official
+    for alias, official in COMPANY_NAME_ALIASES.items()
+}
+
+
 class DartClient:
     """DART API를 호출하고, 저장 경로가 있을 때만 기업코드를 캐시한다."""
 
@@ -253,6 +267,9 @@ class DartClient:
     def find_company(self, company_name: str) -> dict:
         """정확한 이름과 명확한 부분 이름만 선택하고 오타 후보는 안내한다."""
         companies = self.get_corp_codes()
+        company_name = _ALIASES_BY_NORMALIZED_NAME.get(
+            _normalize_company_name(company_name), company_name
+        )
         exact = [item for item in companies if item["corp_name"] == company_name.strip()]
         if len(exact) == 1:
             return exact[0]

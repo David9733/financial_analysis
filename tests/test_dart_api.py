@@ -115,6 +115,37 @@ class DartClientCompanySearchTests(unittest.TestCase):
         ):
             self.client.find_company("롯데웰프드")
 
+    def test_common_abbreviation_resolves_to_official_company(self) -> None:
+        self.client._companies_cache += [
+            {"corp_code": "00164742", "corp_name": "현대자동차", "stock_code": "005380"},
+            # "현대차"를 포함한 유일한 상장사라 약칭 표가 없으면 부분 일치로 선택된다.
+            {"corp_code": "00137997", "corp_name": "현대차증권", "stock_code": "001500"},
+            {"corp_code": "01515323", "corp_name": "LG에너지솔루션", "stock_code": "373220"},
+        ]
+
+        self.assertEqual(self.client.find_company("현대차")["corp_name"], "현대자동차")
+        self.assertEqual(self.client.find_company("현대차증권")["corp_name"], "현대차증권")
+        for name in ("LG엔솔", "엘지엔솔", "lg 엔솔"):
+            with self.subTest(name):
+                self.assertEqual(
+                    self.client.find_company(name)["corp_name"], "LG에너지솔루션"
+                )
+
+    def test_warns_when_analyzed_company_name_differs_from_input(self) -> None:
+        from src.main import name_resolution_warnings
+
+        warnings = name_resolution_warnings(
+            [
+                {"requested_name": "현대차", "corp_name": "현대자동차"},
+                {"requested_name": "sk하이닉스", "corp_name": "SK하이닉스"},
+                {"requested_name": "삼성전자", "corp_name": "삼성전자"},
+            ]
+        )
+
+        self.assertEqual(
+            warnings, ["'현대차' 입력을 DART 기업명 '현대자동차'(으)로 분석했습니다."]
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
