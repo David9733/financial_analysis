@@ -265,7 +265,7 @@ def build_star_score(
         if latest_value("보험서비스수익") is not None and latest_value("투자손익") is not None:
             insurance_inflow = latest_value("보험서비스수익") + latest_value("투자손익")
         efficiency = [
-            _component("보험·투자수익/평균자산", _ratio(insurance_inflow, average_assets), "%", 0.6, INSURANCE_ASSET_EFFICIENCY_ANCHORS, is_proxy=True),
+            _component("보험 및 투자수익/평균자산", _ratio(insurance_inflow, average_assets), "%", 0.6, INSURANCE_ASSET_EFFICIENCY_ANCHORS, is_proxy=True),
             _component("ROA", _metric_value(financial_kpi, "roa"), "%", 0.4, ROA_ANCHORS, trend_key="roa", is_proxy=True),
         ]
         proxy_axes = {"growth": True, "stability": True, "efficiency": True}

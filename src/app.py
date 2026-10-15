@@ -155,7 +155,7 @@ KPI_LABELS = {
     "market_index_outlier_days": "시장지수 하루 변화 이상치",
     "treasury_3y_outlier_days": "금리 하루 변화 이상치",
     "credit_spread_outlier_days": "신용 스프레드 하루 변화 이상치",
-    "weak_krw_rising_rate_days": "금리 상승·원화 약세 거래일",
+    "weak_krw_rising_rate_days": "금리 상승, 원화 약세 거래일",
     "weak_krw_rising_rate_sample_quality": "시나리오 표본 수준",
     "weak_krw_rising_rate_company_return": "해당일 기업 평균 수익률",
     "weak_krw_rising_rate_market_return": "해당일 시장 평균 수익률",
@@ -308,7 +308,7 @@ KPI_HELP_TEXT = {
         "채운 날짜 수입니다. 보간된 구간은 상관계수와 이상치 계산에서 제외됩니다."
     ),
     "weak_krw_rising_rate_days": (
-        "원·달러 환율 일간 변화율이 +0.3% 이상이고 국고채 3년 금리가 "
+        "원/달러 환율 일간 변화율이 +0.3% 이상이고 국고채 3년 금리가 "
         "+3bp 이상 상승한 거래일 수입니다. 기준을 충족한 날이 없어도 임의로 기준을 낮추지 않습니다."
     ),
     "weak_krw_rising_rate_sample_quality": (

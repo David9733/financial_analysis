@@ -233,7 +233,7 @@
     <section id="panel-macro" class="tab-panel" role="tabpanel" aria-labelledby="tab-macro" data-panel="macro" hidden>
       <div class="section-heading"><div><p class="eyebrow">MACRO</p><h2>매크로 분석</h2></div><span>시장지수, 환율, 금리와 신용 스프레드 기준</span></div>
       {{ render_matrix('시장 및 외부 요인 (KOSPI/KOSDAQ, 환율, 금리, 신용 스프레드)', macro_kpi_matrix, '시장지수와 외부 요인의 최신값, 기간 변화 및 이상치를 기업별로 비교합니다.') }}
-      {{ render_matrix('금리 상승·원화 약세 시나리오', scenario_matrix, '원·달러 환율이 하루 +0.3% 이상 오르고 국고채 3년 금리가 +3bp 이상 상승한 날의 기업 수익률을 소속 KOSPI 또는 KOSDAQ과 비교합니다.') }}
+      {{ render_matrix('금리 상승, 원화 약세 시나리오', scenario_matrix, '원/달러 환율이 하루 +0.3% 이상 오르고 국고채 3년 금리가 +3bp 이상 상승한 날의 기업 수익률을 소속 KOSPI 또는 KOSDAQ과 비교합니다.') }}
       {{ render_matrix('매크로 레이더', macro_radar_matrix, '', macro_radar_summaries) }}
       {% if macro_chart_groups %}
         <div class="chart-filter" role="tablist" aria-label="매크로 차트 종류">{% for group in macro_chart_groups %}<button type="button" role="tab" id="chart-tab-{{ group.key }}" aria-controls="chart-group-{{ group.key }}" aria-selected="{{ 'true' if loop.first else 'false' }}" data-chart-filter="{{ group.key }}">{{ group.label }}</button>{% endfor %}</div>
